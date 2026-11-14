@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin">
+  <meta http-equiv="Cross-Origin-Embedder-Policy" content="require-corp">
+  <title>Horizon in your browser</title>
+  <style>
+    :root { color-scheme: dark; font: 15px system-ui, sans-serif; background: #101318; color: #e8edf2; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+    header { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px 16px; background: #1a2029; }
+    h1 { margin: 0 auto 0 0; font-size: 17px; }
+    button, input::file-selector-button { border: 1px solid #465366; border-radius: 6px; padding: 8px 12px; background: #283446; color: inherit; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    button[hidden] { display: none; }
+    #saved-actions { display: flex; gap: 6px; }
+    #remove-files { color: #ffb8b8; border-color: #864b52; background: #482a31; }
+    #fullscreen { white-space: nowrap; }
+    #status { color: #aab7c8; min-width: 190px; }
+    main { min-height: 0; display: grid; place-items: center; padding: 12px; }
+    #canvas { width: min(100%, 1600px); height: min(100%, 900px); min-height: 320px; background: #000; outline: none; }
+    /* Fullscreen is the game and nothing else: no title, buttons or status. Escape leaves it. */
+    body:fullscreen { grid-template-rows: minmax(0, 1fr); overflow: hidden; }
+    body:fullscreen header { display: none; }
+    body:fullscreen main { padding: 0; }
+    body:fullscreen #canvas { width: 100%; height: 100%; max-width: none; max-height: none; min-height: 0; }
+    /* The browser's own fullscreen (F11) is no element's fullscreen, so `:fullscreen` doesn't match it. */
+    @media (display-mode: fullscreen) {
+      body { grid-template-rows: minmax(0, 1fr); overflow: hidden; }
+      body header { display: none; }
+      body main { padding: 0; }
+      body #canvas { width: 100%; height: 100%; max-width: none; max-height: none; min-height: 0; }
+    }
+    #files { display: none; }
+    @media (max-width: 650px) { header { gap: 8px; } h1 { width: 100%; } #status { flex: 1; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Horizon · Minecraft Java Edition 26.3</h1>
+    <button id="choose" disabled>Load prepared game files</button>
+    <div id="saved-actions" hidden>
+      <button id="remove-files" type="button" title="Clear saved prepared files" aria-label="Clear saved prepared files">Clear files</button>
+      <button id="play-saved" type="button" disabled>Play</button>
+    </div>
+    <button id="start-empty" disabled>Start without game files</button>
+    <button id="reload" type="button">Reload game</button>
+    <button id="fullscreen" type="button" aria-pressed="false">Fullscreen</button>
+    <input id="files" type="file" webkitdirectory directory multiple>
+    <span id="status">Choose a prepared resources folder to start.</span>
+  </header>
+  <main><canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas></main>
+  <script>
+    const status = document.querySelector('#status');
+    const picker = document.querySelector('#files');
+    const start = document.querySelector('#choose');
+    const startEmpty = document.querySelector('#start-empty');
+    const savedActions = document.querySelector('#saved-actions');
+    const playSaved = document.querySelector('#play-saved');
+    const removeFiles = document.querySelector('#remove-files');
+    let runtimeReady = false;
+    let gameStarted = false;
+    let launching = false;
+    let savedPaths = null;
+
+    const DB_NAME = 'horizon-prepared-resources';
+    const DB_VERSION = 2;
+    function openResourceDb() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains('files')) db.createObjectStore('files');
+          if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+          if (!db.objectStoreNames.contains('game-files')) db.createObjectStore('game-files');
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error('Could not open browser storage'));
+      });
+    }
+    function requestValue(request) {
+      return new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error('Browser storage request failed'));
+      });
+    }
+    function transactionDone(transaction) {
+      return new Promise((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onabort = transaction.onerror = () => reject(transaction.error || new Error('Browser storage transaction failed'));
+      });
+    }
+    async function readSavedPaths() {
+      const db = await openResourceDb();
+      try {
+        const tx = db.transaction('meta', 'readonly');
+        const done = transactionDone(tx);
+        const saved = await requestValue(tx.objectStore('meta').get('resources'));
+        await done;
+        return Array.isArray(saved?.paths) && saved.paths.includes('horizon-resources.json') ? saved.paths : null;
+      } finally {
+        db.close();
+      }
+    }
+    async function savePreparedFiles(entries) {
+      const db = await openResourceDb();
+      try {
+        const tx = db.transaction(['files', 'meta'], 'readwrite');
+        const done = transactionDone(tx);
+        const files = tx.objectStore('files');
+        const meta = tx.objectStore('meta');
+        files.clear();
+        meta.delete('resources');
+        for (const entry of entries) files.put(entry.blob, entry.path);
+        meta.put({ paths: entries.map(entry => entry.path), savedAt: Date.now() }, 'resources');
+        await done;
+      } finally {
+        db.close();
+      }
+    }
+    async function loadSavedFiles(paths) {
+      const db = await openResourceDb();
+      try {
+        const tx = db.transaction('files', 'readonly');
+        const done = transactionDone(tx);
+        const store = tx.objectStore('files');
+        const reads = paths.map(path => requestValue(store.get(path)));
+        const blobs = await Promise.all(reads);
+        await done;
+        const missing = paths.findIndex((_, i) => !(blobs[i] instanceof Blob));
+        if (missing !== -1) throw new Error(`Saved file is missing: ${paths[missing]}`);
+        return paths.map((path, i) => ({ path, blob: blobs[i] }));
+      } finally {
+        db.close();
+      }
+    }
+    async function clearSavedFiles() {
+      const db = await openResourceDb();
+      try {
+        const tx = db.transaction(['files', 'meta'], 'readwrite');
+        const done = transactionDone(tx);
+        tx.objectStore('files').clear();
+        tx.objectStore('meta').delete('resources');
+        await done;
+      } finally {
+        db.close();
+      }
+    }
+    // WASMFS's JavaScript API has no isDir, isFile or analyzePath: the file type is in stat's mode.
+    const S_IFMT = 0o170000, S_IFDIR = 0o040000, S_IFREG = 0o100000;
+    function pathExists(path) {
+      try { Module.FS.stat(path); return true; } catch { return false; }
+    }
+    function listGameFiles(FS) {
+      const result = [];
+      function visit(directory, prefix) {
+        for (const name of FS.readdir(directory)) {
+          if (name === '.' || name === '..') continue;
+          const path = `${directory}/${name}`;
+          const relative = prefix ? `${prefix}/${name}` : name;
+          const stat = FS.stat(path);
+          const type = stat.mode & S_IFMT;
+          if (type === S_IFDIR) visit(path, relative);
+          else if (type === S_IFREG) result.push({ path: relative, size: stat.size, mtime: Number(stat.mtime) });
+        }
+      }
+      visit('/game', '');
+      return result;
+    }
+    async function readGameManifest(db) {
+      const tx = db.transaction('meta', 'readonly');
+      const done = transactionDone(tx);
+      const manifest = await requestValue(tx.objectStore('meta').get('game-files'));
+      await done;
+      return {
+        files: Array.isArray(manifest?.files) ? manifest.files : [],
+        savedAt: Number(manifest?.savedAt) || 0,
+      };
+    }
+    async function restoreSavedWorlds() {
+      const db = await openResourceDb();
+      try {
+        // Each file gets back the modification time it was saved with, so the first snapshot after
+        // a reload doesn't take every restored file for a changed one.
+        const mtimes = new Map((await readGameManifest(db)).files.map(file => [file.path, file.mtime]));
+        const tx = db.transaction('game-files', 'readonly');
+        const done = transactionDone(tx);
+        await new Promise((resolve, reject) => {
+          const request = tx.objectStore('game-files').openCursor();
+          request.onerror = () => reject(request.error || new Error('Could not read saved worlds'));
+          request.onsuccess = () => {
+            const cursor = request.result;
+            if (!cursor) { resolve(); return; }
+            const relative = String(cursor.key);
+            if (relative && !relative.startsWith('/') && !relative.split('/').includes('..')) {
+              const target = `/game/${relative}`;
+              const parent = target.slice(0, target.lastIndexOf('/'));
+              Module.FS.mkdirTree(parent);
+              const bytes = cursor.value instanceof Uint8Array ? cursor.value : new Uint8Array(cursor.value);
+              Module.FS.writeFile(target, bytes);
+              const mtime = mtimes.get(relative);
+              if (Number.isFinite(mtime)) {
+                try { Module.FS.utime(target, mtime * 1000, mtime * 1000); } catch { /* keeps the restore time */ }
+              }
+            }
+            cursor.continue();
+          };
+        });
+        await done;
+      } finally {
+        db.close();
+      }
+    }
+    let worldSnapshotPromise = null;
+    function saveWorldsToBrowser() {
+      if (!gameStarted || !pathExists('/game')) return Promise.resolve();
+      if (!worldSnapshotPromise) {
+        worldSnapshotPromise = writeWorldSnapshot().finally(() => { worldSnapshotPromise = null; });
+      }
+      return worldSnapshotPromise;
+    }
+    async function writeWorldSnapshot() {
+      let db;
+      try {
+        db = await openResourceDb();
+        const { files: previous, savedAt: previousSavedAt } = await readGameManifest(db);
+        const snapshotStart = Date.now();
+        // File times have a resolution of a second: a file written again in the second the last
+        // snapshot was taken, at the same size, looks unchanged, so those are saved again.
+        const recent = Math.floor(previousSavedAt / 1000) - 1;
+        const previousByPath = new Map(previous.map(file => [file.path, file]));
+        const current = listGameFiles(Module.FS);
+        const currentPaths = new Set(current.map(file => file.path));
+        const deleted = previous.filter(file => !currentPaths.has(file.path)).map(file => file.path);
+        for (let i = 0; i < deleted.length; i += 64) {
+          const tx = db.transaction('game-files', 'readwrite');
+          const done = transactionDone(tx);
+          const store = tx.objectStore('game-files');
+          for (const path of deleted.slice(i, i + 64)) store.delete(path);
+          await done;
+        }
+        const changed = current.filter(file => {
+          const old = previousByPath.get(file.path);
+          return !old || old.size !== file.size || old.mtime !== file.mtime || file.mtime >= recent;
+        });
+        for (let i = 0; i < changed.length; i += 4) {
+          const batch = changed.slice(i, i + 4).map(file => ({
+            path: file.path,
+            bytes: new Uint8Array(Module.FS.readFile(`/game/${file.path}`)),
+          }));
+          const tx = db.transaction('game-files', 'readwrite');
+          const done = transactionDone(tx);
+          const store = tx.objectStore('game-files');
+          for (const file of batch) store.put(file.bytes, file.path);
+          await done;
+        }
+        const tx = db.transaction('meta', 'readwrite');
+        const done = transactionDone(tx);
+        tx.objectStore('meta').put({ files: current, savedAt: snapshotStart }, 'game-files');
+        await done;
+        if (changed.length || deleted.length) console.info(`Horizon: saved ${current.length} world files in this browser`);
+      } catch (error) {
+        console.error('Horizon: could not persist world saves in this browser:', error);
+        status.textContent = 'Could not save world data in browser storage. Check available storage space.';
+      } finally {
+        db?.close();
+      }
+    }
+    async function launch(args) {
+      if (gameStarted || launching) return;
+      launching = true;
+      updateButtons();
+      status.textContent = 'Restoring saved worlds from this browser…';
+      try {
+        await restoreSavedWorlds();
+      } catch (error) {
+        console.error(error);
+        status.textContent = `Could not restore saved worlds; starting without browser saves: ${error.message || error}`;
+      }
+      launching = false;
+      gameStarted = true;
+      updateButtons();
+      status.textContent = 'Starting Horizon…';
+      Module.FS.mkdirTree('/game');
+      Module.callMain(args);
+      status.textContent = 'Horizon is running. Worlds are saved in this browser automatically. Click the game to capture the mouse.';
+    }
+    function updateButtons() {
+      const hasSavedFiles = Boolean(savedPaths);
+      start.hidden = hasSavedFiles;
+      startEmpty.hidden = hasSavedFiles;
+      savedActions.hidden = !hasSavedFiles;
+      start.disabled = !runtimeReady || gameStarted || launching;
+      startEmpty.disabled = !runtimeReady || gameStarted || launching;
+      playSaved.disabled = !runtimeReady || gameStarted || launching;
+      removeFiles.disabled = !hasSavedFiles;
+    }
+    function selectedEntries(files) {
+      return Array.from(files).map(file => {
+        const path = file.webkitRelativePath.split('/').slice(1).join('/');
+        if (!path || path.startsWith('/') || path.split('/').includes('..')) return null;
+        return { path, blob: file.slice(0, file.size, file.type), source: file };
+      }).filter(Boolean);
+    }
+    async function copyFilesIntoGame(entries, label) {
+      const FS = Module.FS;
+      FS.mkdirTree('/resources');
+      for (let i = 0; i < entries.length; i++) {
+        const { path, blob } = entries[i];
+        const target = `/resources/${path}`;
+        FS.mkdirTree(target.slice(0, target.lastIndexOf('/')));
+        FS.writeFile(target, new Uint8Array(await blob.arrayBuffer()));
+        if (i % 20 === 0 || i + 1 === entries.length) {
+          status.textContent = `${label} ${i + 1}/${entries.length} files…`;
+        }
+      }
+    }
+
+    start.addEventListener('click', () => picker.click());
+    startEmpty.addEventListener('click', () => launch(['--resources', '/resources', '--game-dir', '/game']));
+    document.querySelector('#reload').addEventListener('click', async () => {
+      status.textContent = 'Saving world data before reloading…';
+      await saveWorldsToBrowser();
+      window.location.reload();
+    });
+    const fullscreenButton = document.querySelector('#fullscreen');
+    fullscreenButton.addEventListener('click', async () => {
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else {
+          await document.body.requestFullscreen();
+        }
+      } catch (error) {
+        console.error('Could not change fullscreen mode:', error);
+        status.textContent = `Could not change fullscreen mode: ${error.message || error}`;
+      }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      const active = document.fullscreenElement === document.body;
+      fullscreenButton.textContent = active ? 'Exit fullscreen' : 'Fullscreen';
+      fullscreenButton.setAttribute('aria-pressed', String(active));
+    });
+    playSaved.addEventListener('click', async () => {
+      if (!runtimeReady || gameStarted || !savedPaths) return;
+      playSaved.disabled = true;
+      removeFiles.disabled = true;
+      status.textContent = 'Loading saved prepared files from this browser…';
+      try {
+        const entries = await loadSavedFiles(savedPaths);
+        await copyFilesIntoGame(entries, 'Loading saved files');
+        await launch(['--resources', '/resources', '--game-dir', '/game']);
+      } catch (error) {
+        console.error(error);
+        status.textContent = `Could not load saved files: ${error.message || error}`;
+        updateButtons();
+      }
+    });
+    removeFiles.addEventListener('click', async () => {
+      removeFiles.disabled = true;
+      try {
+        await clearSavedFiles();
+        savedPaths = null;
+        status.textContent = 'Saved prepared files removed from this browser.';
+        updateButtons();
+      } catch (error) {
+        console.error(error);
+        status.textContent = `Could not remove saved files: ${error.message || error}`;
+        updateButtons();
+      }
+    });
+    picker.addEventListener('change', async () => {
+      if (!picker.files.length || gameStarted) return;
+      start.disabled = true;
+      startEmpty.disabled = true;
+      try {
+        const entries = selectedEntries(picker.files);
+        if (!entries.some(entry => entry.path === 'horizon-resources.json')) {
+          throw new Error('The selected folder has no top-level horizon-resources.json. Select the prepared 26.3 resources folder.');
+        }
+        status.textContent = `Saving ${entries.length} prepared files in this browser…`;
+        try {
+          await savePreparedFiles(entries);
+          savedPaths = entries.map(entry => entry.path);
+        } catch (storageError) {
+          console.warn('Prepared files could not be saved for the next visit:', storageError);
+          status.textContent = `Browser storage could not keep the files; loading them for this visit only…`;
+        }
+        updateButtons();
+        await copyFilesIntoGame(entries, 'Copying prepared files');
+        await launch(['--resources', '/resources', '--game-dir', '/game']);
+      } catch (error) {
+        console.error(error);
+        status.textContent = `Could not start: ${error.message || error}`;
+        updateButtons();
+      }
+    });
+    var Module = {
+      canvas: document.querySelector('#canvas'),
+      print: text => console.log(text),
+      printErr: text => console.error(text),
+      async onRuntimeInitialized() {
+        runtimeReady = true;
+        if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+        window.setInterval(saveWorldsToBrowser, 3000);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden') void saveWorldsToBrowser();
+        });
+        window.addEventListener('pagehide', () => { void saveWorldsToBrowser(); });
+        try {
+          savedPaths = await readSavedPaths();
+          updateButtons();
+          status.textContent = savedPaths
+            ? 'Prepared game files are saved in this browser. Press Play to start.'
+            : 'Runtime ready. Choose a prepared resources folder to start.';
+        } catch (error) {
+          console.error(error);
+          updateButtons();
+          status.textContent = 'Runtime ready. Browser storage is unavailable; choose prepared files again to start.';
+        }
+      },
+      onAbort(reason) { status.textContent = `Horizon stopped: ${reason}`; }
+    };
+  </script>
+  <script src="/target/wasm32-unknown-emscripten/fast/horizon-client.js"></script>
+</body>
+</html>

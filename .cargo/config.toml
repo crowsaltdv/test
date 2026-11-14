@@ -1,0 +1,21 @@
+# `cargo xtask …` runs the repository's task crate, so the commands in docs/perf-platform.md and
+# web/perf/README.md work as written. `cargo run -p xtask -- …` stays equivalent.
+[alias]
+xtask = "run --package xtask --"
+
+# The browser build (docs/web.md): `web/build.sh` builds `horizon-client` for Emscripten, whose
+# pthreads, file system and clock stand in for the operating system's, so the game's threads,
+# saves and blocking waits compile as they are. Threads need shared memory, which every object
+# must be compiled for: hence `+atomics` here and `-Z build-std` in the script. A panic aborts:
+# Emscripten's unwinding wraps every call that can unwind in a JavaScript trampoline.
+[target.wasm32-unknown-emscripten]
+linker = "emcc.exe"
+rustflags = [
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+    "-C", "panic=abort",
+    # wgpu's own switch for `Send` and `Sync` GPU objects, which its crates turn off on every
+    # wasm target with threads because a browser's WebGL and WebGPU objects belong to one
+    # thread. Emscripten's are the numbers of its OpenGL ES, so the game's threads may hold them
+    # as they do everywhere else; only the main thread draws with them (docs/web.md).
+    "--cfg", "send_sync",
+]
