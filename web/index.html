@@ -127,9 +127,11 @@
         const reads = paths.map(path => requestValue(store.get(path)));
         const blobs = await Promise.all(reads);
         await done;
-        const missing = paths.findIndex((_, i) => !(blobs[i] instanceof Blob));
+        // A saved value is a Blob; an older save, or one interrupted, can hold a raw byte array.
+        const missing = paths.findIndex((_, i) =>
+          !(blobs[i] instanceof Blob || blobs[i] instanceof ArrayBuffer || ArrayBuffer.isView(blobs[i])));
         if (missing !== -1) throw new Error(`Saved file is missing: ${paths[missing]}`);
-        return paths.map((path, i) => ({ path, blob: blobs[i] }));
+        return paths.map((path, i) => ({ path, blob: blobs[i] instanceof Blob ? blobs[i] : new Blob([blobs[i]]) }));
       } finally {
         db.close();
       }
@@ -445,7 +447,38 @@
         return false;
       }
       const total = Number(response.headers.get('X-Horizon-Files')) || 0;
-      status.textContent = `Copying ${total} prepared files from the development server…`;
+      status.textContent = `Copying ${total} prepared files from the server…`;
+      // The copy is kept in this browser while it streams in, so the next start copies nothing:
+      // files go to IndexedDB in small batches, and the manifest naming them is written last, so a
+      // start never sees half a copy. A browser that cannot keep them (a full quota, private mode)
+      // still plays; it just copies again next time.
+      const keptPaths = [];
+      let storeDb = null, storeFailed = false, storeBatch = [], storeBytes = 0;
+      async function flushStore(force) {
+        if (!storeBatch.length && !force) return;
+        if (storeFailed) { storeBatch = []; storeBytes = 0; return; }
+        const batch = storeBatch.splice(0);
+        storeBytes = 0;
+        try {
+          const tx = storeDb.transaction('files', 'readwrite');
+          const done = transactionDone(tx);
+          for (const { path, bytes } of batch) tx.objectStore('files').put(bytes, path);
+          await done;
+        } catch (error) {
+          console.warn('Prepared files could not be saved for the next visit:', error);
+          storeFailed = true;
+        }
+      }
+      try {
+        storeDb = await openResourceDb();
+        const clear = storeDb.transaction('files', 'readwrite');
+        const cleared = transactionDone(clear);
+        clear.objectStore('files').clear();
+        await cleared;
+      } catch (error) {
+        console.warn('Prepared files could not be saved for the next visit:', error);
+        storeFailed = true;
+      }
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       const FS = Module.FS;
@@ -496,30 +529,74 @@
         const target = `/resources/${path}`;
         const parent = target.slice(0, target.lastIndexOf('/'));
         if (!dirs.has(parent)) { FS.mkdirTree(parent); dirs.add(parent); }
-        FS.writeFile(target, take(size));
+        const bytes = take(size);
+        FS.writeFile(target, bytes);
         if (path === 'horizon-resources.json') manifest = true;
+        keptPaths.push(path);
+        if (!storeFailed) {
+          storeBatch.push({ path, bytes: new Blob([bytes]) });
+          storeBytes += size;
+          if (storeBatch.length >= 32 || storeBytes >= 32 * 1024 * 1024) await flushStore(false);
+        }
         copied++;
         if (copied % 500 === 0) status.textContent = `Copying prepared files ${copied}${total ? `/${total}` : ''}…`;
       }
       if (!manifest) throw new Error('The prepared files have no top-level horizon-resources.json');
+      await flushStore(true);
+      if (storeFailed) {
+        try { storeDb?.close(); } catch { /* already closed */ }
+      } else {
+        try {
+          const tx = storeDb.transaction(['files', 'meta'], 'readwrite');
+          const done = transactionDone(tx);
+          tx.objectStore('meta').put({ paths: keptPaths, savedAt: Date.now() }, 'resources');
+          await done;
+          savedPaths = keptPaths;
+        } catch (error) {
+          console.warn('Prepared files could not be saved for the next visit:', error);
+        } finally {
+          try { storeDb.close(); } catch { /* already closed */ }
+        }
+      }
       return true;
     }
 
-    // Play loads the server's prepared 26.3 folder and starts. Without the server's folder it falls
-    // back to the copy already in this browser, and with neither it says why and offers the picker.
+    // The saved copy starts without copying anything again, as long as the server's folder still
+    // holds the same files as when it was saved: a HEAD asks for its file count. null is no answer
+    // (no folder there, or no network): the saved copy is then all the more right.
+    async function savedCopyMatchesServer(count) {
+      try {
+        const response = await fetch('/prepared-resources.bin', { method: 'HEAD', cache: 'no-store' });
+        if (!response.ok) return null;
+        return (Number(response.headers.get('X-Horizon-Files')) || 0) === count;
+      } catch {
+        return null;
+      }
+    }
+
+    // Play starts from the prepared 26.3 copy saved in this browser when it is still the server's
+    // folder, copies the server's folder (and keeps it) when it is not, and with neither says why
+    // and offers the picker.
     play.addEventListener('click', async () => {
       if (!runtimeReady || gameStarted || launching) return;
       play.disabled = true;
       updateButtons();
       try {
-        if (await loadPreparedFromServer()) {
-          await launch(['--resources', '/resources', '--game-dir', '/game']);
-          return;
-        }
         if (savedPaths) {
-          status.textContent = 'The server has no prepared 26.3 folder; loading the copy saved in this browser…';
-          const entries = await loadSavedFiles(savedPaths);
-          await copyFilesIntoGame(entries, 'Loading the saved prepared files');
+          if (await savedCopyMatchesServer(savedPaths.length) !== false) {
+            try {
+              status.textContent = 'Starting from the prepared files saved in this browser…';
+              const entries = await loadSavedFiles(savedPaths);
+              await copyFilesIntoGame(entries, 'Loading the saved prepared files');
+              await launch(['--resources', '/resources', '--game-dir', '/game']);
+              return;
+            } catch (error) {
+              console.warn('The saved prepared files did not load; copying from the server:', error);
+              savedPaths = null;
+            }
+          }
+        }
+        if (await loadPreparedFromServer()) {
           await launch(['--resources', '/resources', '--game-dir', '/game']);
           return;
         }

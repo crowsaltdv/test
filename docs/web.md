@@ -20,15 +20,17 @@ serving it without those headers will prevent the worker pool from starting.
 `web/serve.mjs` also serves the prepared Minecraft 26.3 resources the repository already holds — the
 `26.3` folder beside it, or `horizon-prepare`'s `.local/horizon-client/26.3`; `HORIZON_WEB_RESOURCES`
 names another folder. **Play** copies them into the virtual `/resources` filesystem from one streamed
-response and starts, so a run needs no folder picker and no second copy of the files. A server
-without the folder says where it looked on the page's status line. **Fullscreen**
-expands the game to the whole screen and hides the page's top bar; press Escape to leave fullscreen.
+response and starts, so a run needs no folder picker and no second copy of the files. The copy is
+kept in the browser's IndexedDB: after the first start, Play loads it instead of copying again, and
+only copies again when the server's folder no longer holds the same number of files (it compares
+counts with a `HEAD` request). A server without the folder says where it looked on the page's status
+line. **Fullscreen** expands the game to the whole screen and hides the page's top bar; press Escape
+to leave fullscreen.
 
-A server without that folder keeps one **Play** button: pressing it copies the server's prepared 26.3
-resources into `/resources` and starts the client, or falls back to the copy saved in IndexedDB from
-an earlier visit. A browser with neither gets the reason on the status line and a **Load a folder
-instead…** button, which copies the prepared 26.3 resources directory produced by `horizon-prepare`
-into `/resources` before starting and saves it in IndexedDB for later visits.
+A server without that folder keeps one **Play** button: pressing it starts from the copy saved in
+IndexedDB of an earlier visit, or, with no saved copy either, explains on the status line and shows
+**Load a folder instead…** — which copies the prepared 26.3 resources directory produced by
+`horizon-prepare` into `/resources` before starting and saves it in IndexedDB for later visits.
 The generated files are not included in this repository.
 
 The build script uses `cargo +nightly -Z build-std=std,panic_abort`, because the distributed
@@ -121,18 +123,22 @@ prebuilt game, so it can't install one: the ones it has are compiled in ahead of
 registry (checked against its SHA-256), applies them with
 [horizon-mixins](https://github.com/horizon-rust/horizon-mixins) to a clean copy of the source
 (`git archive HEAD`: commit first) and builds that for the browser into `web/dist`. The current
-list is 23 client-side mods: Zoom, Classic Zoom, FPS Counter, Minimap, Keystrokes, Coordinates
-HUD, Toggle Sprint, Fullbright, 3D Skins, Motion Blur, Connected Textures, ArmorHUD, Armor Status,
+list is 22 client-side mods: Zoom, Classic Zoom, FPS Counter, Minimap, Keystrokes, Coordinates
+HUD, Toggle Sprint, Fullbright, 3D Skins, Connected Textures, ArmorHUD, Armor Status,
 Status Effect HUD, Crosshair Indicator, Chat Heads, Recipes, Fast Items, Fly Speed, Freecam Plus,
 AppleSkin, Accurate Block Placement and RightClickHarvest.
 
 - They are in Options > Mods with an ON/OFF switch and a Settings page, and "(built in)" in
-  Browse Mods. Switching one off takes effect at once. A mod can't be added without a new build.
+  Browse Mods. **They all start off in the browser**: a built-in mod runs only once it has been
+  switched on (`ModList::native_on`; on desktop a built-in mod is on until turned off). Switching
+  one takes effect at once. A mod can't be added without a new build.
 - The rest of the registry's native mods stay "(desktop only)". A mod is left out when its bundle
   names game functions or structures this version doesn't have: the tool refuses it
   (`E_TARGET_NOT_FOUND`) or the game fails to compile with it. Seven were tried and left out:
   appleskin_horizon, dynamic_fps_for_rust, freelook, inventory_profiles, veinminer, xtoxray and
-  shulker_peek. Add an id to `native-mods.txt` to try another; the script stops at the first
+  shulker_peek. Motion Blur compiled but aborted the game the moment it was on: its shader reads a
+  depth texture (`textureLoad`), which WebGL's shader language cannot do, so it is left out too
+  (a mod that makes its own GPU pipelines can fail this way in a browser). Add an id to `native-mods.txt` to try another; the script stops at the first
   mod that doesn't apply and says which.
 - A bundle pins the game commit it was tested on. The ones here need only the stable hook points,
   so the script drops the pin (as the launcher's build does); a bundle that needs more fails to

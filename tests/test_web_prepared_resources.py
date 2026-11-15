@@ -98,6 +98,27 @@ class PreparedResourcesTests(unittest.TestCase):
                 "assets/minecraft/models/block.json": payload,
             })
 
+    def test_a_head_request_says_the_count_without_sending_the_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            prepared = Path(temporary) / "prepared"
+            prepared.mkdir()
+            (prepared / "horizon-resources.json").write_text("{}")
+            (prepared / "assets" / "block.json").parent.mkdir(parents=True)
+            (prepared / "assets" / "block.json").write_bytes(b"payload")
+            with serving(prepared) as port:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/prepared-resources.bin", method="HEAD")
+                with urllib.request.urlopen(request) as response:
+                    status = response.status
+                    count = response.headers["X-Horizon-Files"]
+                    body = response.read()
+
+        # The page compares this count with the copy saved in the browser to decide whether to
+        # start from it or copy again.
+        self.assertEqual(status, 200)
+        self.assertEqual(int(count), 2)
+        self.assertEqual(body, b"")
+
     def test_a_folder_that_is_not_there_is_a_404(self):
         with tempfile.TemporaryDirectory() as temporary:
             with serving(Path(temporary) / "missing") as port:
