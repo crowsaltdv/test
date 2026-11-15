@@ -23,6 +23,9 @@ pub struct Listing {
     pub downloads: u64,
     /// The project's page on the website.
     pub page: String,
+    /// The address of the project's icon (empty for none): the browser fetches it
+    /// ([`ModBrowser::icons`]).
+    pub icon: String,
     /// The version installed in this game folder, if any.
     pub installed: Option<String>,
 }
@@ -63,6 +66,11 @@ pub enum Status {
     Failed(String),
 }
 
+/// The atlas slots the mod list's icons use: the upper half of the pack icons', which the pack
+/// screen never shares a frame with.
+const ICON_SLOTS: std::ops::Range<usize> =
+    crate::hud::PACK_ICON_SLOTS / 2..crate::hud::PACK_ICON_SLOTS;
+
 #[derive(Clone, Debug, Default)]
 pub struct ModBrowser {
     pub status: Status,
@@ -71,9 +79,41 @@ pub struct ModBrowser {
     pub installing: Option<String>,
     /// The last install's outcome, already translated, for the page it ran on.
     pub message: Option<(String, bool)>,
+    /// Each project's icon once it has arrived (128 x 128 RGBA, by project id).
+    pub icons: std::collections::HashMap<String, std::sync::Arc<[u8]>>,
+    slots: std::cell::RefCell<crate::pack_screen::IconSlots>,
 }
 
 impl ModBrowser {
+    /// The atlas sprite holding project `id`'s icon this frame, sending the pixels when the
+    /// icon takes a slot; none while the icon hasn't arrived or no slot is free.
+    pub fn bind_icon(
+        &self,
+        id: &str,
+        atlas: &crate::hud::HudAtlas,
+        patches: &mut Vec<crate::font::Patch>,
+    ) -> Option<String> {
+        let icon = self.icons.get(id)?;
+        let mut slots = self.slots.borrow_mut();
+        let (slot, send) = slots.slot_in(id, icon, ICON_SLOTS)?;
+        let sprite = format!("horizon/pack-icon{slot}");
+        let rect = atlas.sprites.get(&sprite)?;
+        if send {
+            patches.push(crate::font::Patch {
+                x: (rect.u0 * atlas.width as f32).round() as u32,
+                y: (rect.v0 * atlas.height as f32).round() as u32,
+                width: crate::hud::PACK_ICON_SIZE,
+                height: crate::hud::PACK_ICON_SIZE,
+                rgba: icon.to_vec(),
+            });
+        }
+        Some(sprite)
+    }
+    /// Starts a frame's icon binding.
+    pub fn begin_icons(&self, atlas: &crate::hud::HudAtlas) {
+        self.slots.borrow_mut().begin(atlas);
+    }
+
     /// The listings a search for `query` finds, by index into `listings`.
     pub fn found(&self, query: &str) -> Vec<usize> {
         let query = query.to_lowercase();

@@ -373,6 +373,8 @@ pub enum Action {
     None,
     Quit,
     Options,
+    /// The browser build's Mods button: Options > Mods (docs/web.md).
+    Mods,
     Accessibility,
     Language,
     /// AccessibilityOnboardingScreen's Music & Sounds button.
@@ -1874,6 +1876,10 @@ impl Title {
             Mode::Main => {
                 let cx = (w / 2.0).floor();
                 let y = (h / 4.0).floor() + 48.0;
+                // The browser build has a Mods button, a row of its own below Realms, as a
+                // modded game's title does: the rows under it move down.
+                let browser = cfg!(target_os = "emscripten");
+                let down = if browser { 24.0 } else { 0.0 };
                 let mut buttons = vec![
                     b(
                         cx - 100.0,
@@ -1903,7 +1909,7 @@ impl Title {
                     ),
                     b(
                         cx - 100.0,
-                        y + 96.0,
+                        y + 96.0 + down,
                         98.0,
                         &lang::get_or("menu.options", "Options..."),
                         true,
@@ -1912,7 +1918,7 @@ impl Title {
                     .does(crate::widgets::Action::Options),
                     b(
                         cx + 2.0,
-                        y + 96.0,
+                        y + 96.0 + down,
                         98.0,
                         &lang::get_or("menu.quit", "Quit Game"),
                         true,
@@ -1937,7 +1943,7 @@ impl Title {
                 {
                     let mut button = b(
                         cx - 34.0 + i as f32 * 24.0,
-                        y + 72.0,
+                        y + 72.0 + down,
                         20.0,
                         &lang::get_or(key, plain),
                         id != 5 || crate::multiplayer::has_title_entry(),
@@ -1945,6 +1951,16 @@ impl Title {
                     );
                     button.icon = Some((icon, 15.0));
                     buttons.push(button);
+                }
+                if browser {
+                    buttons.push(b(
+                        cx - 100.0,
+                        y + 72.0,
+                        200.0,
+                        &lang::get_or("horizon.pages.open.mods", "Mods"),
+                        true,
+                        9,
+                    ));
                 }
                 buttons
             }
@@ -3768,6 +3784,7 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
                 Action::None
             }
             (Mode::Main, Some(3)) => Action::Options,
+            (Mode::Main, Some(9)) if cfg!(target_os = "emscripten") => Action::Mods,
             (Mode::Main, Some(7)) => Action::Accessibility,
             (Mode::Main, Some(6)) => Action::Language,
             (Mode::Select { worlds, selected }, Some(10)) => {

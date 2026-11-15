@@ -104,11 +104,23 @@ impl UiResources {
     pub fn load(root: &std::path::Path, defaults: &std::path::Path) -> Result<Self> {
         // The title screen waits for both: the panorama's six faces decode
         // beside the atlas.
+        if cfg!(target_os = "emscripten") {
+            // In a browser the panorama and the atlas load one after the other: a thread
+            // started here cannot begin while the page's thread waits (docs/web.md).
+            let panorama = horizon_client::gfx::panorama::Faces::load(root, defaults);
+            let mod_image = crate::game::mods::built_with_native_mods();
+            let atlas = HudAtlas::build_over_with_image(root, defaults, mod_image)?;
+            return Ok(Self {
+                atlas,
+                panorama: Arc::new(panorama),
+            });
+        }
         std::thread::scope(|scope| {
             let panorama = named_scope(scope, "panorama", || {
-                startup::time("ui.panorama", || {
+                let faces = startup::time("ui.panorama", || {
                     horizon_client::gfx::panorama::Faces::load(root, defaults)
-                })
+                });
+                faces
             });
             let mod_image = crate::game::mods::built_with_native_mods();
             let atlas = startup::time("ui.atlas", || {

@@ -1,18 +1,11 @@
 # Render blueprint for the browser build (docs/web.md, "Hosting on Render").
-# A static site that publishes web/dist, which `web/dist.ps1` fills; nothing is built on Render.
+# A small Node service that serves web/dist (which `web/dist.ps1` fills) with the cross-origin
+# isolation headers, plus `/mod-proxy`, the allow-listed route the in-game mod browser downloads
+# through. Nothing is built on Render, and the service has no dependencies to install.
 services:
   - type: web
-    runtime: static
+    runtime: node
     name: horizon-web
-    staticPublishPath: web/dist
-    headers:
-      # Shared-memory WebAssembly threads need the page cross-origin isolated.
-      - path: /*
-        name: Cross-Origin-Opener-Policy
-        value: same-origin
-      - path: /*
-        name: Cross-Origin-Embedder-Policy
-        value: require-corp
-      - path: /*
-        name: Cross-Origin-Resource-Policy
-        value: same-origin
+    plan: free
+    buildCommand: echo "nothing to build"
+    startCommand: node web/server.mjs

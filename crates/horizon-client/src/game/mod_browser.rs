@@ -9,6 +9,7 @@ use horizon_client::{
     mod_browser::{Listing, ModBrowser, Status},
     mod_list::ModList,
     mod_registry::{self, Done},
+    pack_screen,
 };
 use horizon_mods::index::Index;
 use std::path::PathBuf;
@@ -29,7 +30,14 @@ enum Finished {
 pub(super) struct Jobs {
     running: Option<Receiver<Finished>>,
     index: Option<Arc<Index>>,
+    /// The icons being fetched, one worker for all of them: each arrives as it is decoded.
+    icons: Option<Receiver<(String, Arc<[u8]>)>>,
+    /// The projects whose icons were asked for.
+    asked: std::collections::HashSet<String>,
 }
+
+/// The icon of a project: the largest the registry's icons are, a few hundred KiB at most.
+const MAX_ICON: u64 = 2 << 20;
 
 impl Jobs {
     /// Browse mods opened: the index, read again from the registry (the
@@ -75,6 +83,7 @@ impl Jobs {
     /// turned on in `mods`; the caller saves the settings and lists the mods
     /// again when this returns true.
     pub(super) fn poll(&mut self, ui: &mut ModBrowser, mods: &mut ModList) -> bool {
+        self.take_icons(ui);
         let Some(running) = &self.running else {
             return false;
         };
@@ -96,6 +105,7 @@ impl Jobs {
                 self.index = Some(index);
                 ui.listings = listings;
                 ui.status = Status::Ready;
+                self.fetch_icons(ui);
                 false
             }
             Finished::Index(Err(why)) => {
@@ -131,6 +141,59 @@ impl Jobs {
                         ui.message = Some((text, false));
                         false
                     }
+                }
+            }
+        }
+    }
+}
+
+impl Jobs {
+    /// Starts fetching the icons the list shows and hasn't asked for.
+    fn fetch_icons(&mut self, ui: &ModBrowser) {
+        if self.icons.is_some() {
+            return;
+        }
+        let wanted: Vec<(String, String)> = ui
+            .listings
+            .iter()
+            .filter(|l| !l.icon.is_empty() && !self.asked.contains(&l.id))
+            .map(|l| (l.id.clone(), l.icon.clone()))
+            .collect();
+        if wanted.is_empty() {
+            return;
+        }
+        self.asked.extend(wanted.iter().map(|(id, _)| id.clone()));
+        let (send, receive) = channel();
+        self.icons = Some(receive);
+        spawn("mod-browser-icons", move || {
+            for (id, url) in wanted {
+                let Ok(bytes) = mod_registry::download(&url, MAX_ICON) else {
+                    continue;
+                };
+                // A project without a usable icon shows none.
+                if let Some(icon) = pack_screen::load_fetched_icon(&bytes)
+                    && send.send((id, icon)).is_err()
+                {
+                    return;
+                }
+            }
+        });
+    }
+
+    /// The icons that arrived since the last frame, into `ui`.
+    fn take_icons(&mut self, ui: &mut ModBrowser) {
+        let Some(receive) = &self.icons else {
+            return;
+        };
+        loop {
+            match receive.try_recv() {
+                Ok((id, icon)) => {
+                    ui.icons.insert(id, icon);
+                }
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => {
+                    self.icons = None;
+                    return;
                 }
             }
         }

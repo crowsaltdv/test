@@ -84,4 +84,13 @@ fn web_link() {
     for arg in ARGS {
         println!("cargo:rustc-link-arg-bin=horizon-client={arg}");
     }
+    // HTTP for the in-game mod browser (`horizon-system`'s `web_http`).
+    let http = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
+        .join("web")
+        .join("http.js");
+    println!("cargo:rerun-if-changed={}", http.display());
+    println!(
+        "cargo:rustc-link-arg-bin=horizon-client=--js-library={}",
+        http.display()
+    );
 }

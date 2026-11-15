@@ -93,6 +93,7 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [target.'cfg(target_os = "emscripten")'.dependencies]
 ureq = { version = "2", default-features = false }
+horizon-system = { path = "../horizon-system" }
 
 [target.'cfg(unix)'.dependencies]
 # The server thread's CPU time per tick (`HORIZON_SPIKES`, spans.rs).

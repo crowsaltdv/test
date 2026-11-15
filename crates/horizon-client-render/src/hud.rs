@@ -492,8 +492,12 @@ fn cit_sprites(
             before - ids.len()
         );
     }
+    // One thread decodes in a browser (docs/web.md).
+    if cfg!(target_os = "emscripten") {
+        return ids.iter().filter_map(|id| cit_sprite(root, id)).collect();
+    }
     // Decoded on the threads `pack` decodes the rest on: a big pack names thousands.
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let threads = horizon_threads::worker_count();
     let chunk = ids.len().div_ceil(threads).max(1);
     std::thread::scope(|scope| {
         let workers: Vec<_> = ids
@@ -1342,9 +1346,13 @@ impl HudAtlas {
                 maps,
             ))
         };
-        let threads = std::thread::available_parallelism().map_or(2, |n| n.get());
+        let threads = horizon_threads::worker_count().max(2);
         let chunk = files.len().div_ceil(threads).max(1);
-        let decoded: Vec<_> = std::thread::scope(|scope| {
+        let decoded: Vec<_> = if cfg!(target_os = "emscripten") {
+            // One thread decodes in a browser (docs/web.md).
+            files.iter().filter_map(decode_one).collect()
+        } else {
+            std::thread::scope(|scope| {
             let handles: Vec<_> = files
                 .chunks(chunk)
                 .map(|part| {
@@ -1355,7 +1363,8 @@ impl HudAtlas {
                 .into_iter()
                 .flat_map(|h| h.join().unwrap_or_default())
                 .collect()
-        });
+            })
+        };
         let mut flags = HashMap::new();
         let mut gui_sizes = HashMap::new();
         let mut animated: Vec<String> = Vec::new();

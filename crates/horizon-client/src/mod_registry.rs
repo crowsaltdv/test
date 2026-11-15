@@ -13,6 +13,7 @@
 use crate::mod_browser::Listing;
 use horizon_mods::index::{self, Index, Kind, Project, Trust, Version};
 use std::fs;
+#[cfg(not(target_os = "emscripten"))]
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -80,20 +81,28 @@ fn fetch_text(at: &str) -> Result<String, String> {
     if !at.starts_with("https://") {
         return fs::read_to_string(at).map_err(|e| format!("{at}: {e}"));
     }
-    let response = ureq::get(at)
-        .set("User-Agent", AGENT)
-        .call()
-        .map_err(|e| match e {
-            ureq::Error::Status(code, _) => format!("the mod registry answered {code}"),
-            ureq::Error::Transport(t) => format!("the mod registry can't be reached: {t}"),
-        })?;
-    let mut text = String::new();
-    response
-        .into_reader()
-        .take(MAX_INDEX)
-        .read_to_string(&mut text)
-        .map_err(|e| e.to_string())?;
-    Ok(text)
+    #[cfg(target_os = "emscripten")]
+    {
+        let bytes = horizon_system::web_http::get(at, MAX_INDEX)?;
+        return String::from_utf8(bytes).map_err(|e| e.to_string());
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    {
+        let response = ureq::get(at)
+            .set("User-Agent", AGENT)
+            .call()
+            .map_err(|e| match e {
+                ureq::Error::Status(code, _) => format!("the mod registry answered {code}"),
+                ureq::Error::Transport(t) => format!("the mod registry can't be reached: {t}"),
+            })?;
+        let mut text = String::new();
+        response
+            .into_reader()
+            .take(MAX_INDEX)
+            .read_to_string(&mut text)
+            .map_err(|e| e.to_string())?;
+        Ok(text)
+    }
 }
 
 /// Whether version `v` is a `.hmod` with code: the game doesn't run those any
@@ -140,6 +149,7 @@ pub fn listings(index: &Index, home: &Path) -> Vec<Listing> {
                 changelog: v.changelog.clone(),
                 downloads: p.downloads,
                 page: format!("{SITE}/{}", p.id),
+                icon: p.icon.clone().unwrap_or_default(),
                 installed: installed.version_of(home, &p.id),
             })
         })
@@ -247,20 +257,27 @@ pub fn download(url: &str, max: u64) -> Result<Vec<u8>, String> {
     if !url.starts_with("https://") {
         return Err(format!("{url} is not an https address"));
     }
-    let response = ureq::get(url)
-        .set("User-Agent", AGENT)
-        .call()
-        .map_err(|e| e.to_string())?;
-    let mut body = Vec::new();
-    response
-        .into_reader()
-        .take(max + 1)
-        .read_to_end(&mut body)
-        .map_err(|e| e.to_string())?;
-    if body.len() as u64 > max {
-        return Err(format!("{url} is larger than the index says"));
+    #[cfg(target_os = "emscripten")]
+    {
+        horizon_system::web_http::get(url, max)
     }
-    Ok(body)
+    #[cfg(not(target_os = "emscripten"))]
+    {
+        let response = ureq::get(url)
+            .set("User-Agent", AGENT)
+            .call()
+            .map_err(|e| e.to_string())?;
+        let mut body = Vec::new();
+        response
+            .into_reader()
+            .take(max + 1)
+            .read_to_end(&mut body)
+            .map_err(|e| e.to_string())?;
+        if body.len() as u64 > max {
+            return Err(format!("{url} is larger than the index says"));
+        }
+        Ok(body)
+    }
 }
 
 /// `mod-browser.json`, kept as JSON values so the launcher's entries this

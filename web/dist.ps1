@@ -11,7 +11,10 @@ New-Item -ItemType Directory -Force $dist | Out-Null
 Copy-Item (Join-Path $out 'horizon-client.js') $dist -Force
 Copy-Item (Join-Path $out 'horizon_client.wasm') $dist -Force
 # The page loads the loader from the build folder when served by serve.mjs; here it sits beside it.
-(Get-Content (Join-Path $PSScriptRoot 'index.html') -Raw) `
-    -replace '/target/wasm32-unknown-emscripten/fast/horizon-client\.js', '/horizon-client.js' |
-    Set-Content (Join-Path $dist 'index.html') -Encoding utf8 -NoNewline
+# Read and written as UTF-8 explicitly: Windows PowerShell 5.1 would read it as ANSI and turn
+# "·" and "…" into "Â·" and "â€¦".
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$page = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'index.html'), $utf8)
+$page = $page -replace '/target/wasm32-unknown-emscripten/fast/horizon-client\.js', '/horizon-client.js'
+[System.IO.File]::WriteAllText((Join-Path $dist 'index.html'), $page, $utf8)
 Get-ChildItem $dist | Select-Object Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } }

@@ -260,6 +260,11 @@ fn read_contents(
     };
     let next = AtomicUsize::new(0);
     let threads = horizon_threads::worker_count().clamp(1, packages.len().max(1));
+    // In a browser the window's thread cannot wait for threads it starts (docs/web.md): it reads
+    // the mods itself.
+    if cfg!(target_os = "emscripten") {
+        return packages.iter().map(read).collect();
+    }
     let mut done: Vec<_> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)
             .map(|_| {

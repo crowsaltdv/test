@@ -48,6 +48,7 @@
     <button id="start-empty" disabled>Start without game files</button>
     <button id="reload" type="button">Reload game</button>
     <button id="fullscreen" type="button" aria-pressed="false">Fullscreen</button>
+    <button id="copy-log" type="button" title="Copy the game's recent log lines">Copy game log</button>
     <input id="files" type="file" webkitdirectory directory multiple>
     <span id="status">Choose a prepared resources folder to start.</span>
   </header>
@@ -149,7 +150,7 @@
       }
     }
     // WASMFS's JavaScript API has no isDir, isFile or analyzePath: the file type is in stat's mode.
-    const S_IFMT = 0o170000, S_IFDIR = 0o040000, S_IFREG = 0o100000;
+    const S_IFMT = 0o170000, S_IFDIR = 0o040000, S_IFREG = 0o100000, S_IFLNK = 0o120000;
     function pathExists(path) {
       try { Module.FS.stat(path); return true; } catch { return false; }
     }
@@ -158,8 +159,12 @@
       function visit(directory, prefix) {
         for (const name of FS.readdir(directory)) {
           if (name === '.' || name === '..') continue;
+          // The game's rebuildable cache holds a mirror of /resources made of links (the overlay of
+          // the mods that are on): saving it would copy every game file again, so it isn't kept.
+          if (name === '.horizon-cache' && !prefix) continue;
           const path = `${directory}/${name}`;
           const relative = prefix ? `${prefix}/${name}` : name;
+          if (FS.lstat && (FS.lstat(path).mode & S_IFMT) === S_IFLNK) continue;
           const stat = FS.stat(path);
           const type = stat.mode & S_IFMT;
           if (type === S_IFDIR) visit(path, relative);
@@ -286,6 +291,38 @@
         console.warn('Could not move saved options to the browser defaults:', error);
       }
     }
+    // Dropping .hmod files on the page installs them: they go in /game/horizon-mods, the folder the
+    // game reads content mods from, and the next snapshot keeps them in this browser. Files dropped
+    // before the game starts wait until the saved files are restored.
+    const pendingMods = [];
+    function writeHmod(name, bytes) {
+      Module.FS.mkdirTree('/game/horizon-mods');
+      Module.FS.writeFile(`/game/horizon-mods/${name}`, bytes);
+    }
+    function flushPendingMods() {
+      for (const { name, bytes } of pendingMods.splice(0)) writeHmod(name, bytes);
+    }
+    async function acceptHmods(files) {
+      const mods = Array.from(files).filter(file => /\.hmod$/i.test(file.name));
+      if (!mods.length) return false;
+      for (const file of mods) {
+        const name = file.name.replace(/[^\w.\- ]/g, '_');
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (runtimeReady && (gameStarted || pathExists('/game'))) writeHmod(name, bytes);
+        else pendingMods.push({ name, bytes });
+      }
+      status.textContent = gameStarted
+        ? `Installed ${mods.map(m => m.name).join(', ')}. Use Reload game to load it.`
+        : `Ready to install ${mods.map(m => m.name).join(', ')} when the game starts.`;
+      return true;
+    }
+    addEventListener('dragover', event => {
+      if (Array.from(event.dataTransfer?.types || []).includes('Files')) event.preventDefault();
+    });
+    addEventListener('drop', event => {
+      event.preventDefault();
+      acceptHmods(event.dataTransfer?.files || []);
+    });
     async function launch(args) {
       if (gameStarted || launching) return;
       launching = true;
@@ -303,6 +340,7 @@
       updateButtons();
       status.textContent = 'Starting Horizon…';
       Module.FS.mkdirTree('/game');
+      flushPendingMods();
       Module.callMain(args);
       status.textContent = 'Horizon is running. Worlds are saved in this browser automatically. Click the game to capture the mouse.';
     }
@@ -339,6 +377,11 @@
 
     start.addEventListener('click', () => picker.click());
     startEmpty.addEventListener('click', () => launch(['--resources', '/resources', '--game-dir', '/game']));
+    document.querySelector('#copy-log').addEventListener('click', async () => {
+      const text = gameLog.join('\n');
+      try { await navigator.clipboard.writeText(text); status.textContent = `Copied ${gameLog.length} log lines.`; }
+      catch { console.log(text); status.textContent = 'Could not copy; the log is in the browser console.'; }
+    });
     document.querySelector('#reload').addEventListener('click', async () => {
       status.textContent = 'Saving world data before reloading…';
       await saveWorldsToBrowser();
@@ -416,10 +459,16 @@
         updateButtons();
       }
     });
+    // The game's last output lines, for the Copy game log button (mods that don't load say why here).
+    const gameLog = [];
+    function keepLog(text) {
+      gameLog.push(String(text));
+      if (gameLog.length > 1500) gameLog.splice(0, gameLog.length - 1500);
+    }
     var Module = {
       canvas: document.querySelector('#canvas'),
-      print: text => console.log(text),
-      printErr: text => console.error(text),
+      print: text => { keepLog(text); console.log(text); },
+      printErr: text => { keepLog(text); console.error(text); },
       async onRuntimeInitialized() {
         runtimeReady = true;
         if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});

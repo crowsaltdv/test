@@ -32,9 +32,10 @@ default features: no audio, controllers or Horizon extras. Emscripten emits
 
 ## Hosting on Render
 
-`render.yaml` is a blueprint for a static site that publishes `web/dist` with the
-cross-origin isolation headers the page needs (without them the worker threads never start). The
-game is not built on Render: a fresh build takes far longer than a free instance allows.
+`render.yaml` is a blueprint for a small Node web service (`web/server.mjs`, no dependencies) that
+serves `web/dist` with the cross-origin isolation headers the page needs (without them the worker
+threads never start) and the `/mod-proxy` route the mod browser uses. The game is not built on
+Render: a fresh build takes far longer than a free instance allows.
 
 1. Build and pack on your machine: `./web/dist.ps1` (`-SkipBuild` packs the last build).
 2. Commit `web/dist` (the wasm is about 70 MB, under GitHub's 100 MB limit) and push.
@@ -43,6 +44,31 @@ game is not built on Render: a fresh build takes far longer than a free instance
 `web/dist` holds the page, the loader and the wasm only. It has no Minecraft files, and must
 not: each visitor loads their own prepared game files in the page, which keeps them in their
 browser. Repack and push for every new build.
+
+## Mods (`.hmod`)
+
+The browser build runs content mods (`.hmod`: data and assets, no code), the same files as on
+desktop. Mods are off until switched on.
+
+- **Mods button.** The title screen has a Mods button under Realms; it opens Options, Mods, the
+  game's own mod browser. Options also lists Mods where the desktop build lists telemetry.
+- **Mod browser.** It lists and installs from the Horizon mod registry as on desktop (size,
+  SHA-256 and signature checks included). A browser can't fetch the registry's GitHub downloads
+  itself (no CORS headers), so the game asks the page's own `/mod-proxy` (`web/mod-proxy.mjs`,
+  through `web/http.js` and `horizon-system`'s `web_http`). It passes only the registry's hosts,
+  follows redirects between them and caps a download at 64 MB. `web/serve.mjs` and
+  `web/server.mjs` both have it; a plain static host does not, and the browser then says the
+  registry can't be reached.
+- **Icons.** Each project's icon is fetched with the list (through the same proxy), scaled to
+  128 x 128 and drawn beside its row, in atlas slots the pack screen doesn't share a frame with.
+- **What is offered.** The browser lists the registry's content mods (`.hmod` with data and
+  assets). The registry's native mods (`.hnmod`) are Rust code built into the desktop game, and
+  its shaders need the desktop renderer, so neither can run in a browser.
+- **After an install,** restart the game (Reload game): the mod's blocks and items appear in the
+  creative tabs and in `/give`. A mod that adds blocks makes the restart take longer, since the
+  game rebuilds its block tables once per start.
+- **Drag in a file.** Drop a `.hmod` on the page and it is put in `/game/horizon-mods`, saved in
+  this browser with the worlds. Use **Reload game** to see it in the Mods page, then switch it on.
 
 ## Mouse and fullscreen
 
@@ -104,6 +130,16 @@ What changed, and why:
   on that thread (a frame) must never start threads and wait for them in one call: it never
   returns. Leaving a world did exactly that (the title panorama's six decoder threads) and froze
   the page; the browser build keeps the decoded panorama instead (`gfx/panorama.rs`).
+- **Loading runs one step at a time.** A thread started from another thread only begins once the
+  page's own thread is back in the browser's event loop, and that thread can be busy waiting for
+  a lock one of those threads holds. Loading with a content mod that adds blocks (a rebuilt block
+  table, many more textures) deadlocked on this, so in the browser the title screen's panorama
+  and atlas, the texture decoding and the mod content build run on the loading thread itself
+  (`resource_load.rs`, `resource_tables.rs`, `hud.rs`, `mod_content.rs`), and `worker_count`
+  stops at 4. Desktop keeps its threads.
+- A browser has no executable file (`current_exe` fails): the mod content cache is keyed on the
+  game's version there instead (`mod_content.rs`, `stamp`). Before that, a mod's content was never
+  loaded in the browser (`content mods not loaded: no /proc/self/exe`).
 - Fullscreen (the page's button) and the browser's own (F11) both hide the page's top bar.
 - Browser GPU drivers may expose fewer features than desktop GPUs. The browser path uses the
   regular SDR renderer when HDR output is unavailable.

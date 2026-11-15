@@ -2453,20 +2453,23 @@ impl Overlay<'_> {
         };
         let next = std::sync::atomic::AtomicUsize::new(0);
         let threads = horizon_threads::worker_count().clamp(1, COPY_THREADS);
+        let work = || -> std::result::Result<(), String> {
+            loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some((rel, from)) = jobs.get(i) else {
+                    return Ok(());
+                };
+                copy(rel, from).map_err(|e| format!("{rel}: {e}"))?;
+            }
+        };
+        // In a browser the window's thread cannot wait for threads it starts (docs/web.md): it
+        // copies the files itself.
+        if cfg!(target_os = "emscripten") {
+            work()?;
+            return Ok(());
+        }
         std::thread::scope(|scope| {
-            let workers: Vec<_> = (0..threads)
-                .map(|_| {
-                    scope.spawn(|| -> std::result::Result<(), String> {
-                        loop {
-                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            let Some((rel, from)) = jobs.get(i) else {
-                                return Ok(());
-                            };
-                            copy(rel, from).map_err(|e| format!("{rel}: {e}"))?;
-                        }
-                    })
-                })
-                .collect();
+            let workers: Vec<_> = (0..threads).map(|_| scope.spawn(&work)).collect();
             workers.into_iter().try_for_each(|w| {
                 w.join()
                     .unwrap_or_else(|_| Err("a copy thread panicked".into()))
@@ -2793,12 +2796,12 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
     // copied: they need only the plan, and write the folders made real here first, which
     // no mod file goes to (those are under assets/, data/ and worldgen/structure/).
     let jobs = table_jobs(base, &overlay)?;
-    std::thread::scope(|scope| -> Result<()> {
-        let tables = scope.spawn(|| {
-            let _step = crate::spans::startup::step("mods.tables");
-            tables(base, &plan, &overlay, &jobs).map_err(|e| e.to_string())
-        });
-        let files = (|| -> Result<()> {
+    let run_tables = || -> std::result::Result<(), String> {
+        let _step = crate::spans::startup::step("mods.tables");
+        tables(base, &plan, &overlay, &jobs).map_err(|e| e.to_string())
+    };
+    let mut run_files = || -> Result<()> {
+        {
             let _step = crate::spans::startup::step("mods.files");
             for m in mods {
                 let declarations = format!("data/{}/horizon/", m.id);
@@ -2878,13 +2881,24 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
                 }
             }
             overlay.copy_all(&copies)
-        })();
-        let tables = tables
-            .join()
-            .unwrap_or_else(|_| Err("a table thread panicked".into()));
-        files?;
-        Ok(tables?)
-    })?;
+        }
+    };
+    let (files, tables) = if cfg!(target_os = "emscripten") {
+        // A browser's window thread cannot wait for threads it starts (docs/web.md).
+        let files = run_files();
+        (files, run_tables())
+    } else {
+        std::thread::scope(|scope| {
+            let tables = scope.spawn(&run_tables);
+            let files = run_files();
+            let tables = tables
+                .join()
+                .unwrap_or_else(|_| Err("a table thread panicked".into()));
+            (files, tables)
+        })
+    };
+    files?;
+    tables?;
     // A reload appends every pack's sources for an atlas to the ones below it.
     for (file, sources) in &atlases {
         let vanilla = fs::read_to_string(base.join(file)).ok();
@@ -3229,7 +3243,14 @@ fn stamp(base: &Path, mods: &[ContentMod]) -> Result<String> {
         ))
     };
     let mut parts = vec!["horizon mod content 1".to_owned()];
-    parts.push(meta(&std::env::current_exe()?)?);
+    // The running program, so a new build rebuilds the root. A browser has no executable file to
+    // ask (`current_exe` fails there: no /proc/self/exe); the root is kept in the page's memory
+    // only, so the version is enough.
+    if cfg!(target_os = "emscripten") {
+        parts.push(format!("web {}", env!("CARGO_PKG_VERSION")));
+    } else {
+        parts.push(meta(&std::env::current_exe()?)?);
+    }
     let base = std::path::absolute(base)?;
     parts.push(
         String::from_utf8_lossy(&fs::read(base.join("horizon-resources.json"))?).into_owned(),

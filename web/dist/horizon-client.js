@@ -7681,6 +7681,31 @@ function _emscripten_glGetBufferSubData(target, offset, size, data) {
   size && GLctx.getBufferSubData(target, offset, (growMemViews(), HEAPU8).subarray(data >>> 0, data + size >>> 0));
 }
 
+var _horizon_http_get = (urlPtr, bodyOut, lengthOut) => {
+  const url = UTF8ToString(urlPtr);
+  (growMemViews(), HEAPU32)[bodyOut >>> 2] = 0;
+  (growMemViews(), HEAPU32)[lengthOut >>> 2] = 0;
+  try {
+    const request = new XMLHttpRequest;
+    request.open("GET", "/mod-proxy?url=" + encodeURIComponent(url), false);
+    // Synchronous requests can't ask for an ArrayBuffer; read the bytes as a binary string.
+    request.overrideMimeType("text/plain; charset=x-user-defined");
+    request.send();
+    const text = request.responseText || "";
+    const length = text.length;
+    if (length > 0) {
+      const pointer = _malloc(length);
+      if (!pointer) return -1;
+      for (let i = 0; i < length; i++) (growMemViews(), HEAPU8)[pointer + i >>> 0] = text.charCodeAt(i) & 255;
+      (growMemViews(), HEAPU32)[bodyOut >>> 2] = pointer;
+      (growMemViews(), HEAPU32)[lengthOut >>> 2] = length;
+    }
+    return request.status || -1;
+  } catch (e) {
+    return -1;
+  }
+};
+
 var initRandomFill = () => view => (view.set(crypto.getRandomValues(new Uint8Array(view.byteLength))), 
 0);
 
@@ -8498,13 +8523,13 @@ function checkIncomingModuleAPI() {
 }
 
 // Imports from the Wasm binary.
+var _calloc = makeInvalidEarlyAccess("_calloc");
+
 var _malloc = makeInvalidEarlyAccess("_malloc");
 
 var _free = makeInvalidEarlyAccess("_free");
 
 var _realloc = makeInvalidEarlyAccess("_realloc");
-
-var _calloc = makeInvalidEarlyAccess("_calloc");
 
 var _main = Module["_main"] = makeInvalidEarlyAccess("_main");
 
@@ -8693,10 +8718,10 @@ var ___cpp_exception = makeInvalidEarlyAccess("___cpp_exception");
 var wasmTable = makeInvalidEarlyAccess("wasmTable");
 
 function assignWasmExports(wasmExports) {
+  assert(typeof wasmExports["calloc"] !== "undefined", "missing Wasm export: calloc");
   assert(typeof wasmExports["malloc"] !== "undefined", "missing Wasm export: malloc");
   assert(typeof wasmExports["free"] !== "undefined", "missing Wasm export: free");
   assert(typeof wasmExports["realloc"] !== "undefined", "missing Wasm export: realloc");
-  assert(typeof wasmExports["calloc"] !== "undefined", "missing Wasm export: calloc");
   assert(typeof wasmExports["__main_argc_argv"] !== "undefined", "missing Wasm export: __main_argc_argv");
   assert(typeof wasmExports["emscripten_builtin_free"] !== "undefined", "missing Wasm export: emscripten_builtin_free");
   assert(typeof wasmExports["_emscripten_tls_init"] !== "undefined", "missing Wasm export: _emscripten_tls_init");
@@ -8789,10 +8814,10 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports["wasmfs_flush"] !== "undefined", "missing Wasm export: wasmfs_flush");
   assert(typeof wasmExports["__indirect_function_table"] !== "undefined", "missing Wasm export: __indirect_function_table");
   assert(typeof wasmExports["__cpp_exception"] !== "undefined", "missing Wasm export: __cpp_exception");
+  _calloc = createExportWrapper("calloc", wasmExports["calloc"], 2);
   _malloc = createExportWrapper("malloc", wasmExports["malloc"], 1);
   _free = createExportWrapper("free", wasmExports["free"], 1);
   _realloc = createExportWrapper("realloc", wasmExports["realloc"], 2);
-  _calloc = createExportWrapper("calloc", wasmExports["calloc"], 2);
   _main = Module["_main"] = createExportWrapper("__main_argc_argv", wasmExports["__main_argc_argv"], 2);
   _emscripten_builtin_free = Module["_emscripten_builtin_free"] = createExportWrapper("emscripten_builtin_free", wasmExports["emscripten_builtin_free"], 1);
   __emscripten_tls_init = createExportWrapper("_emscripten_tls_init", wasmExports["_emscripten_tls_init"], 0);
@@ -9255,6 +9280,7 @@ function assignWasmImports() {
     /** @export */ exit: _exit,
     /** @export */ getaddrinfo: _getaddrinfo,
     /** @export */ glGetBufferSubData: _glGetBufferSubData,
+    /** @export */ horizon_http_get: _horizon_http_get,
     /** @export */ memory: wasmMemory,
     /** @export */ proc_exit: _proc_exit,
     /** @export */ random_get: _random_get
@@ -9265,15 +9291,15 @@ function assignWasmImports() {
 // that it is recognised by metadce and minify-import-export-names
 // passes.
 function applySignatureConversions(wasmExports) {
-  var makeWrapper_pp = f => a0 => f(a0) >>> 0;
   var makeWrapper_ppp = f => (a0, a1) => f(a0, a1) >>> 0;
+  var makeWrapper_pp = f => a0 => f(a0) >>> 0;
   var makeWrapper_p = f => () => f() >>> 0;
   var makeWrapper_pp____ = f => (a0, a1, a2, a3, a4) => f(a0, a1, a2, a3, a4) >>> 0;
   var origExports = wasmExports;
   wasmExports = {};
+  wasmExports["calloc"] = makeWrapper_ppp(origExports["calloc"]);
   wasmExports["malloc"] = makeWrapper_pp(origExports["malloc"]);
   wasmExports["realloc"] = makeWrapper_ppp(origExports["realloc"]);
-  wasmExports["calloc"] = makeWrapper_ppp(origExports["calloc"]);
   wasmExports["_emscripten_tls_init"] = makeWrapper_p(origExports["_emscripten_tls_init"]);
   wasmExports["pthread_self"] = makeWrapper_p(origExports["pthread_self"]);
   wasmExports["emscripten_builtin_memalign"] = makeWrapper_ppp(origExports["emscripten_builtin_memalign"]);

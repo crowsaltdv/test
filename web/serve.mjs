@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { createReadStream, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { modProxy } from './mod-proxy.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const types = new Map([
@@ -17,6 +18,7 @@ createServer((req, res) => {
   let pathname;
   try { pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); }
   catch { res.writeHead(400).end('Bad request'); return; }
+  if (pathname === '/mod-proxy') { modProxy(req, res); return; }
   if (pathname === '/') pathname = '/web/index.html';
   const path = resolve(root, `.${pathname}`);
   if (path !== root && !path.startsWith(root + sep)) { res.writeHead(403).end('Forbidden'); return; }

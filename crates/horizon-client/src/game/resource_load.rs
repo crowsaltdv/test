@@ -382,7 +382,9 @@ pub(super) fn load_resources(
     // bundle's core tables from the same root (`load_core`). A pack failure
     // in either starts both again with the game's own resources
     // (Minecraft.rollbackResourcePacks).
-    let parallel = threads > 1;
+    // In a browser a thread started from another can only begin once the page's own thread is free
+    // of waiting, so loading runs its steps one after another there (docs/web.md).
+    let parallel = threads > 1 && !cfg!(target_os = "emscripten");
     let mut offer = |ui: UiResources, root: &std::path::Path| {
         if menu {
             log::info!(
@@ -407,7 +409,8 @@ pub(super) fn load_resources(
                 })
             });
             let ui = load_ui(&root).map(|ui| offer(ui, &root));
-            (ui, core.join())
+            let joined = core.join();
+            (ui, joined)
         });
         let packs = root != vanilla_root;
         let failure = match (ui, core) {

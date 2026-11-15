@@ -2826,10 +2826,16 @@ impl OptionsUi {
                 let entries: &[_] = if horizon_extras() {
                     &entries
                 } else {
+                    // The browser build keeps the Mods page in the slot of the telemetry one.
+                    let second = if cfg!(target_os = "emscripten") {
+                        ("horizon.pages.open.mods", Some(Page::Mods))
+                    } else {
+                        ("options.telemetry", None)
+                    };
                     plain = [
                         &entries[..entries.len() - 3],
                         &[
-                            ("options.telemetry", None),
+                            second,
                             ("options.credits_and_attribution", Some(Page::Credits)),
                         ],
                     ]
@@ -3460,6 +3466,9 @@ impl OptionsUi {
         if list {
             self.narrate_list(&widgets, list_key, (top, bottom), w, cursor);
         }
+        if self.page() == Page::ModBrowser {
+            self.mod_browser.begin_icons(atlas);
+        }
         let mut tooltip = None;
         // The widget a keyboard-focused tooltip belongs to: `MenuTooltipPositioner`
         // keeps it against that widget, not at the pointer.
@@ -3512,6 +3521,24 @@ impl OptionsUi {
                     crate::widgets::last_narratable(|n| {
                         narrate_widget(n, s, wd, hover, list_key, framebuffer);
                     });
+                    // A project's icon beside its row in Browse mods.
+                    if let Act::ModProject(i) = act
+                        && wd.x >= 34.0
+                        && let Some(l) = self.mod_browser.listings.get(*i)
+                        && let Some(sprite) =
+                            self.mod_browser.bind_icon(&l.id, atlas, &mut batch.patches)
+                    {
+                        ui::blit_sprite(
+                            batch,
+                            atlas,
+                            &sprite,
+                            wd.x - 32.0,
+                            wd.y - 3.0,
+                            28.0,
+                            28.0,
+                            u32::MAX,
+                        );
+                    }
                 }
                 WKind::Slider { label, value, opt } => {
                     let dragging = self.dragging == Some(*opt);

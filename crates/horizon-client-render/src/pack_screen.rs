@@ -385,7 +385,7 @@ pub struct PackScreen {
 /// written into a slot, so an icon is sent once, when it takes a slot, and not
 /// again every frame it is drawn.
 #[derive(Clone, Debug, Default)]
-struct IconSlots {
+pub(crate) struct IconSlots {
     /// The atlas the pixels went into ([`HudAtlas::revision`]); a new atlas holds none of them.
     revision: u64,
     /// Frames bound so far: an icon drawn in this one keeps its slot.
@@ -397,7 +397,7 @@ struct IconSlots {
 
 impl IconSlots {
     /// Starts a frame on `atlas`; an atlas that is not the one the slots were filled in empties them.
-    fn begin(&mut self, atlas: &HudAtlas) {
+    pub(crate) fn begin(&mut self, atlas: &HudAtlas) {
         if self.revision != atlas.revision {
             self.held.clear();
             self.revision = atlas.revision;
@@ -409,6 +409,17 @@ impl IconSlots {
     /// icon takes a free slot, else the slot of the icon drawn longest ago; none when every slot
     /// holds an icon drawn in this frame, and that icon keeps `unknown_pack`.
     fn slot_for(&mut self, texture: &str, icon: &Arc<[u8]>) -> Option<(usize, bool)> {
+        self.slot_in(texture, icon, 0..PACK_ICON_SLOTS)
+    }
+
+    /// [`Self::slot_for`] with the slots limited to `range`: a screen that shares the atlas
+    /// with the pack screen keeps to its own part of it.
+    pub(crate) fn slot_in(
+        &mut self,
+        texture: &str,
+        icon: &Arc<[u8]>,
+        range: std::ops::Range<usize>,
+    ) -> Option<(usize, bool)> {
         if let Some(at) = self.held.iter().position(|h| h.0 == texture) {
             let mut kept = self.held.remove(at);
             let same = Arc::ptr_eq(&kept.2, icon);
@@ -418,10 +429,16 @@ impl IconSlots {
             self.held.push(kept);
             return Some((slot, !same));
         }
-        let slot = match (0..PACK_ICON_SLOTS).find(|i| !self.held.iter().any(|h| h.1 == *i)) {
+        let slot = match range.clone().find(|i| !self.held.iter().any(|h| h.1 == *i)) {
             Some(free) => free,
-            None if self.held.first().is_some_and(|h| h.3 < self.frame) => self.held.remove(0).1,
-            None => return None,
+            None => match self
+                .held
+                .iter()
+                .position(|h| range.contains(&h.1) && h.3 < self.frame)
+            {
+                Some(oldest) => self.held.remove(oldest).1,
+                None => return None,
+            },
         };
         self.held
             .push((texture.to_owned(), slot, icon.clone(), self.frame));

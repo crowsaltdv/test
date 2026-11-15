@@ -44,7 +44,17 @@ pub fn worker_count() -> usize {
     static COUNT: OnceLock<usize> = OnceLock::new();
     *COUNT.get_or_init(|| {
         parse_worker_count(std::env::var("HORIZON_WORKER_THREADS").ok())
-            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+            .unwrap_or_else(|| {
+                let machine = std::thread::available_parallelism().map_or(1, |n| n.get());
+                // A browser reports the host's cores, but its threads are Web Workers out of a
+                // pool of 64 that the page starts with (docs/web.md): more than a few at once
+                // between the game's own threads run the pool dry and the page waits for ever.
+                if cfg!(target_os = "emscripten") {
+                    machine.min(4)
+                } else {
+                    machine
+                }
+            })
     })
 }
 

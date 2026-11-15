@@ -59,19 +59,23 @@ pub(super) fn tables(
     };
     let next = std::sync::atomic::AtomicUsize::new(0);
     let threads = horizon_threads::worker_count();
+    let work = || -> std::result::Result<(), String> {
+        loop {
+            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some((name, _)) = jobs.get(i) else {
+                return Ok(());
+            };
+            table(name).map_err(|e| e.to_string())?;
+        }
+    };
+    // In a browser the window's thread cannot wait for threads it starts (docs/web.md).
+    if cfg!(target_os = "emscripten") {
+        work()?;
+        return Ok(());
+    }
     std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads.min(TABLE_THREADS))
-            .map(|_| {
-                scope.spawn(|| -> std::result::Result<(), String> {
-                    loop {
-                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some((name, _)) = jobs.get(i) else {
-                            return Ok(());
-                        };
-                        table(name).map_err(|e| e.to_string())?;
-                    }
-                })
-            })
+            .map(|_| scope.spawn(&work))
             .collect();
         workers.into_iter().try_for_each(|w| {
             w.join()

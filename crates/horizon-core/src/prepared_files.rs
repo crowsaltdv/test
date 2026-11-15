@@ -184,6 +184,12 @@ impl PreparedFiles {
 
 /// `root`'s file, opened once per process; `None` when it has no usable one.
 pub fn open(root: &Path) -> Option<Arc<PreparedFiles>> {
+    // The browser build reads the files one by one: the page never has a packed data file, and
+    // looking for one under a lock that every file read takes, on threads that may have to wait
+    // for the page's thread for their file calls, deadlocked loading (docs/web.md).
+    if cfg!(target_os = "emscripten") {
+        return None;
+    }
     type Opened = Vec<(PathBuf, Option<Arc<PreparedFiles>>)>;
     static OPENED: Mutex<Opened> = Mutex::new(Vec::new());
     let mut opened = OPENED.lock().unwrap_or_else(PoisonError::into_inner);

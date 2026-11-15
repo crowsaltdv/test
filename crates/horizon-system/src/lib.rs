@@ -11,6 +11,8 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 pub mod scrub;
+#[cfg(target_os = "emscripten")]
+pub mod web_http;
 
 /// What `program args` prints, trimmed, when it succeeds and prints something. On Windows the
 /// program opens no console window: a GUI launcher or a game started without one would flash a
