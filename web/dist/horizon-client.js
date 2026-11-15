@@ -7706,6 +7706,12 @@ var _horizon_http_get = (urlPtr, bodyOut, lengthOut) => {
   }
 };
 
+var _horizon_upload_hmod = () => {
+  try {
+    if (typeof globalThis.horizonUploadHmod === "function") globalThis.horizonUploadHmod();
+  } catch (e) {}
+};
+
 var initRandomFill = () => view => (view.set(crypto.getRandomValues(new Uint8Array(view.byteLength))), 
 0);
 
@@ -9281,6 +9287,7 @@ function assignWasmImports() {
     /** @export */ getaddrinfo: _getaddrinfo,
     /** @export */ glGetBufferSubData: _glGetBufferSubData,
     /** @export */ horizon_http_get: _horizon_http_get,
+    /** @export */ horizon_upload_hmod: _horizon_upload_hmod,
     /** @export */ memory: wasmMemory,
     /** @export */ proc_exit: _proc_exit,
     /** @export */ random_get: _random_get

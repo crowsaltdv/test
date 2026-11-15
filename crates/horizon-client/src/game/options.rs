@@ -449,9 +449,15 @@ impl Game<'_> {
                     super::packs::open_folder(&dir);
                 }
                 Event::OpenModFolder => {
-                    let dir = Self::game_dir().join(horizon_client::mod_list::DIR);
-                    let _ = std::fs::create_dir_all(&dir);
-                    super::packs::open_folder(&dir);
+                    // A browser has no folder to open: it takes an uploaded .hmod instead.
+                    #[cfg(target_os = "emscripten")]
+                    horizon_system::web_http::upload_hmod();
+                    #[cfg(not(target_os = "emscripten"))]
+                    {
+                        let dir = Self::game_dir().join(horizon_client::mod_list::DIR);
+                        let _ = std::fs::create_dir_all(&dir);
+                        super::packs::open_folder(&dir);
+                    }
                 }
                 Event::BrowseMods => {
                     let ui = &mut self.ui.options.mod_browser;

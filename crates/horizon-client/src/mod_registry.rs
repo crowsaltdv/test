@@ -117,12 +117,23 @@ fn needs_port(v: &Version) -> bool {
 /// The version of content mod `p` this game installs: the newest for this
 /// Minecraft version that wasn't taken down and has no code.
 pub fn installable<'a>(index: &Index, p: &'a Project) -> Option<&'a Version> {
-    if p.kind != Kind::Mod {
-        return None;
+    let level = horizon_mods::api_level::LEVEL;
+    match p.kind {
+        Kind::Mod => index.installable(p, GAME, level).filter(|v| !needs_port(v)),
+        // A resource pack is a file for the game's own pack list: it needs no code.
+        Kind::ResourcePack => index.installable(p, GAME, level),
+        // Native mods are compiled into the desktop game, shader packs need its renderer and
+        // modpacks hold native mods: a browser can't run them.
+        _ => None,
     }
-    index
-        .installable(p, GAME, horizon_mods::api_level::LEVEL)
-        .filter(|v| !needs_port(v))
+}
+
+/// What kind of project `p` is, as the browser's list names it.
+fn kind_name(p: &Project) -> String {
+    match p.kind {
+        Kind::Mod if p.versions.iter().any(needs_port) => "code-mod".to_owned(),
+        _ => p.kind.name().to_owned(),
+    }
 }
 
 /// The registry's projects the browser offers, most downloaded first: content
@@ -134,8 +145,15 @@ pub fn listings(index: &Index, home: &Path) -> Vec<Listing> {
         .projects
         .iter()
         .filter_map(|p| {
-            let v = installable(index, p)?;
+            // Everything the registry has for this game is listed; what a browser can't run
+            // says so (`Listing::supported`).
+            let runnable = installable(index, p);
+            let v = runnable.or_else(|| {
+                index.installable(p, GAME, horizon_mods::api_level::LEVEL)
+            })?;
             Some(Listing {
+                kind: kind_name(p),
+                supported: runnable.is_some(),
                 id: p.id.clone(),
                 name: p.name.clone(),
                 summary: p.summary.clone(),
@@ -154,7 +172,12 @@ pub fn listings(index: &Index, home: &Path) -> Vec<Listing> {
             })
         })
         .collect();
-    out.sort_by(|a, b| b.downloads.cmp(&a.downloads).then(a.name.cmp(&b.name)));
+    out.sort_by(|a, b| {
+        b.supported
+            .cmp(&a.supported)
+            .then(b.downloads.cmp(&a.downloads))
+            .then(a.name.cmp(&b.name))
+    });
     out
 }
 
@@ -166,6 +189,65 @@ pub struct Done {
     /// Checked against the author's key, or unsigned (the SHA-256 still pins
     /// the reviewed file).
     pub verified: bool,
+    /// A resource pack, put in `resourcepacks/` and not turned on by installing.
+    pub pack: bool,
+}
+
+/// Installs a resource pack of the registry into `resourcepacks/<id>.zip`: the download is checked
+/// against the index's size and SHA-256, and recorded in `mod-browser.json` like a mod.
+fn install_pack(
+    home: &Path,
+    p: &Project,
+    v: &Version,
+    get: &dyn Fn(&str, u64) -> Result<Vec<u8>, String>,
+) -> Result<Done, String> {
+    use sha2::{Digest, Sha256};
+    let relative = format!("resourcepacks/{}.zip", p.id);
+    let target = home.join(&relative);
+    let mut list = Installed::load(home);
+    let done = |verified| Done {
+        id: p.id.clone(),
+        version: v.version.clone(),
+        verified,
+        pack: true,
+    };
+    if let Some(i) = list.position(&p.id)
+        && list.entries[i]["version"].as_str() == Some(v.version.as_str())
+        && target.exists()
+    {
+        return Ok(done(true));
+    }
+    let bytes = get(&v.file.url, v.file.size)?;
+    if bytes.len() as u64 != v.file.size {
+        return Err(format!("{} isn't the size the index says", v.file.name));
+    }
+    let hash: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    if !hash.eq_ignore_ascii_case(&v.file.sha256) {
+        return Err(format!("{} doesn't match the reviewed file", v.file.name));
+    }
+    fs::create_dir_all(home.join("resourcepacks")).map_err(|e| e.to_string())?;
+    let part = home.join("resourcepacks").join(format!(".{}.zip.part", p.id));
+    fs::write(&part, &bytes).map_err(|e| format!("{}: {e}", part.display()))?;
+    fs::rename(&part, &target).map_err(|e| format!("{}: {e}", target.display()))?;
+    list.record(serde_json::json!({
+        "source": "horizon",
+        "project": p.id,
+        "slug": p.id,
+        "title": p.name,
+        "kind": "resourcepack",
+        "version": v.version,
+        "number": v.version,
+        "file": relative,
+        "checksum": format!("SHA-256:{}", v.file.sha256),
+        "page": format!("{SITE}/{}", p.id),
+        "dependency": false,
+        "verdict": "Verified",
+    }));
+    list.save(home)?;
+    Ok(done(true))
 }
 
 /// Installs the newest installable version of the registry's content mod `id`
@@ -184,6 +266,9 @@ pub fn install(
         .ok_or_else(|| format!("{id} isn't in Horizon's registry"))?;
     let v = installable(index, p)
         .ok_or_else(|| format!("{} has no version this game can install", p.name))?;
+    if p.kind == Kind::ResourcePack {
+        return install_pack(home, p, v, get);
+    }
     let relative = format!("{}/{id}.hmod", crate::mod_list::DIR);
     let target = home.join(&relative);
     let mut list = Installed::load(home);
@@ -197,6 +282,7 @@ pub fn install(
             id: id.to_owned(),
             version: v.version.clone(),
             verified: list.entries[i]["verdict"].as_str() == Some("Verified"),
+            pack: false,
         });
     }
     // Never over a mod the player put there themselves.
@@ -242,6 +328,7 @@ pub fn install(
         id: id.to_owned(),
         version: v.version.clone(),
         verified,
+        pack: false,
     })
 }
 

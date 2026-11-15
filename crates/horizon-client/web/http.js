@@ -3,6 +3,13 @@
 // wait for it; it goes through the page's own `/mod-proxy`, which passes only the registry's
 // addresses (web/mod-proxy.mjs), because GitHub's release downloads send no CORS headers.
 addToLibrary({
+  // The Mods page's upload button: the page (web/index.html) opens its file picker. Only the
+  // page's own thread has the page; a click is the user activation a picker needs.
+  horizon_upload_hmod: () => {
+    try {
+      if (typeof globalThis.horizonUploadHmod === 'function') globalThis.horizonUploadHmod();
+    } catch (e) { /* the page isn't there */ }
+  },
   horizon_http_get__deps: ['malloc'],
   horizon_http_get: (urlPtr, bodyOut, lengthOut) => {
     const url = UTF8ToString(urlPtr);

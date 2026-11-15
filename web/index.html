@@ -291,31 +291,102 @@
         console.warn('Could not move saved options to the browser defaults:', error);
       }
     }
-    // Dropping .hmod files on the page installs them: they go in /game/horizon-mods, the folder the
-    // game reads content mods from, and the next snapshot keeps them in this browser. Files dropped
-    // before the game starts wait until the saved files are restored.
+    // A .hmod put on the page (dropped, or picked with the Mods page's Upload Mod button) is
+    // installed: it goes in /game/horizon-mods, the folder the game reads content mods from, is
+    // turned on in horizon-mods.txt, and the next snapshot keeps both in this browser. Files that
+    // arrive before the game starts wait until the saved files are restored.
     const pendingMods = [];
-    function writeHmod(name, bytes) {
+    // A .hmod is a zip: its id is `id = "..."` in horizon-mod.toml. Read here, so the mod can be
+    // turned on without the game's help.
+    async function hmodId(bytes) {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      let end = -1;
+      for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
+        if (view.getUint32(i, true) === 0x06054b50) { end = i; break; }
+      }
+      if (end < 0) throw new Error('not a .hmod (a zip file)');
+      const count = view.getUint16(end + 10, true);
+      let at = view.getUint32(end + 16, true);
+      for (let n = 0; n < count && view.getUint32(at, true) === 0x02014b50; n++) {
+        const method = view.getUint16(at + 10, true);
+        const size = view.getUint32(at + 20, true);
+        const nameLength = view.getUint16(at + 28, true);
+        const extraLength = view.getUint16(at + 30, true);
+        const commentLength = view.getUint16(at + 32, true);
+        const local = view.getUint32(at + 42, true);
+        const name = new TextDecoder().decode(bytes.subarray(at + 46, at + 46 + nameLength));
+        if (name === 'horizon-mod.toml') {
+          const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+          let data = bytes.subarray(start, start + size);
+          if (method === 8) {
+            const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+            data = new Uint8Array(await new Response(stream).arrayBuffer());
+          } else if (method !== 0) {
+            throw new Error('unsupported zip compression');
+          }
+          const match = /^\s*id\s*=\s*"([^"]+)"/m.exec(new TextDecoder().decode(data));
+          return match ? match[1] : null;
+        }
+        at += 46 + nameLength + extraLength + commentLength;
+      }
+      throw new Error('not a Horizon mod: it has no horizon-mod.toml');
+    }
+    function writeHmod(name, bytes, id) {
       Module.FS.mkdirTree('/game/horizon-mods');
       Module.FS.writeFile(`/game/horizon-mods/${name}`, bytes);
+      if (id && /^[a-z0-9_\-]+$/.test(id)) {
+        const line = `mod.${id}:true`;
+        const path = '/game/horizon-mods.txt';
+        const text = pathExists(path) ? new TextDecoder().decode(Module.FS.readFile(path)) : '';
+        const lines = [...new Set(text.split('\n').filter(l => l && !l.startsWith(`mod.${id}:`)))];
+        lines.push(line);
+        Module.FS.writeFile(path, new TextEncoder().encode(lines.join('\n') + '\n'));
+      }
     }
     function flushPendingMods() {
-      for (const { name, bytes } of pendingMods.splice(0)) writeHmod(name, bytes);
+      for (const { name, bytes, id } of pendingMods.splice(0)) writeHmod(name, bytes, id);
     }
     async function acceptHmods(files) {
       const mods = Array.from(files).filter(file => /\.hmod$/i.test(file.name));
       if (!mods.length) return false;
+      const done = [];
       for (const file of mods) {
-        const name = file.name.replace(/[^\w.\- ]/g, '_');
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        if (runtimeReady && (gameStarted || pathExists('/game'))) writeHmod(name, bytes);
-        else pendingMods.push({ name, bytes });
+        try {
+          if (file.size > 64 * 1024 * 1024) throw new Error('larger than 64 MB');
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const id = await hmodId(bytes);
+          const name = (id && /^[a-z0-9_\-]+$/.test(id) ? id : file.name.replace(/\.hmod$/i, '').replace(/[^\w\-]/g, '_')) + '.hmod';
+          if (runtimeReady && (gameStarted || pathExists('/game'))) writeHmod(name, bytes, id);
+          else pendingMods.push({ name, bytes, id });
+          done.push(id || name);
+        } catch (error) {
+          console.error(error);
+          status.textContent = `${file.name} was not installed: ${error.message || error}`;
+          return false;
+        }
       }
-      status.textContent = gameStarted
-        ? `Installed ${mods.map(m => m.name).join(', ')}. Use Reload game to load it.`
-        : `Ready to install ${mods.map(m => m.name).join(', ')} when the game starts.`;
+      if (!gameStarted) {
+        status.textContent = `${done.join(', ')} will be installed and turned on when the game starts.`;
+        return true;
+      }
+      status.textContent = `Installed ${done.join(', ')}.`;
+      // The game reads its mods once, when it starts: it has to start again to see this one.
+      if (confirm(`Installed ${done.join(', ')} and turned it on.\n\nReload the game now to load it? Anything not saved in a world is lost.`)) {
+        await saveWorldsToBrowser();
+        window.location.reload();
+      } else {
+        status.textContent = `Installed ${done.join(', ')}. Use Reload game to load it.`;
+      }
       return true;
     }
+    // The game's Mods page asks for this (Upload Mod...): a file picker for a .hmod.
+    window.horizonUploadHmod = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.hmod';
+      input.addEventListener('change', () => { if (input.files.length) acceptHmods(input.files); });
+      input.click();
+    };
     addEventListener('dragover', event => {
       if (Array.from(event.dataTransfer?.types || []).includes('Files')) event.preventDefault();
     });

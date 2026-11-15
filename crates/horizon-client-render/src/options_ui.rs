@@ -2247,7 +2247,9 @@ impl OptionsUi {
         for i in found {
             let l = &b.listings[i];
             let mut label = Text::literal(format!("{} {}", l.name, l.version));
-            if l.has_update() {
+            if !l.supported {
+                label = label.append(Text::literal(" (desktop only)"));
+            } else if l.has_update() {
                 label = label.append(tr("horizon.mods.browse.has_update"));
             } else if l.installed.is_some() {
                 label = label.append(tr("horizon.mods.browse.is_installed"));
@@ -2287,6 +2289,10 @@ impl OptionsUi {
             .filter(|t| !t.is_empty())
             .collect();
         rows.push(Row::Note(by.join(" · ")));
+        if let Some(why) = crate::mod_browser::unsupported_reason(&l.kind).filter(|_| !l.supported)
+        {
+            rows.extend(wrap(why, 64).into_iter().map(Row::Note));
+        }
         let labels: Vec<&str> = l
             .categories
             .iter()
@@ -2298,6 +2304,13 @@ impl OptionsUi {
         }
         let installing = b.installing.as_deref() == Some(l.id.as_str());
         let install = match (&l.installed, installing) {
+            _ if !l.supported => inactive(button(
+                0.0,
+                0.0,
+                150.0,
+                Text::literal("Desktop only"),
+                Act::None,
+            )),
             (_, true) => inactive(button(
                 0.0,
                 0.0,
@@ -3237,7 +3250,14 @@ impl OptionsUi {
                     _ => None,
                 };
                 if let Some((label, act)) = folder {
-                    out.push(button(cx - 154.0, h - 27.0, 150.0, tr(label), act));
+                    // In a browser the mod folder is a file picker: a .hmod is uploaded.
+                    let text = if cfg!(target_os = "emscripten") && matches!(act, Act::OpenModFolder)
+                    {
+                        Text::literal("Upload Mod...")
+                    } else {
+                        tr(label)
+                    };
+                    out.push(button(cx - 154.0, h - 27.0, 150.0, text, act));
                     out.push(button(cx + 4.0, h - 27.0, 150.0, tr("gui.done"), Act::Done));
                 } else {
                     out.push(done(h - 27.0));

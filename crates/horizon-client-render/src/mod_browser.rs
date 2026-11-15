@@ -23,6 +23,11 @@ pub struct Listing {
     pub downloads: u64,
     /// The project's page on the website.
     pub page: String,
+    /// `mod`, `resourcepack`, or what a browser can't run: `native-mod`, `code-mod`, `shader`,
+    /// `modpack` (see `supported`).
+    pub kind: String,
+    /// Whether this game can install it here; the rest are listed with the reason they can't.
+    pub supported: bool,
     /// The address of the project's icon (empty for none): the browser fetches it
     /// ([`ModBrowser::icons`]).
     pub icon: String,
@@ -49,6 +54,21 @@ impl Listing {
         self.installed
             .as_ref()
             .is_some_and(|installed| *installed != self.version)
+    }
+}
+
+/// Why this game can't install a project of `kind` (a [`Listing::kind`] it lists but doesn't
+/// support): the browser build can't run code of the game's own source, a shader renderer or a
+/// pack of native mods.
+pub fn unsupported_reason(kind: &str) -> Option<&'static str> {
+    match kind {
+        "native-mod" => Some(
+            "A native mod is compiled into the desktop game. It can't run in a browser, which runs one prebuilt game.",
+        ),
+        "code-mod" => Some("This mod has code, which this game doesn't run."),
+        "shader" | "shader-pack" => Some("Shader packs need the desktop game's renderer."),
+        "modpack" => Some("This pack holds native mods: it needs the desktop game."),
+        _ => None,
     }
 }
 

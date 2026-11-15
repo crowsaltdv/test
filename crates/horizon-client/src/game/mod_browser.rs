@@ -126,11 +126,20 @@ impl Jobs {
                             done.version,
                             if done.verified { "signed" } else { "unsigned" }
                         );
-                        mods.enabled.insert(done.id.clone());
-                        mods.disabled.remove(&done.id);
                         let name = ui
                             .listing(&done.id)
                             .map_or(done.id.clone(), |l| l.name.clone());
+                        if done.pack {
+                            // A pack is switched on in Options > Resource Packs, not here.
+                            let text = format!(
+                                "{name} {} is installed. Turn it on in Options > Resource Packs.",
+                                done.version
+                            );
+                            ui.message = Some((text, true));
+                            return false;
+                        }
+                        mods.enabled.insert(done.id.clone());
+                        mods.disabled.remove(&done.id);
                         let text = lang::tr("horizon.mods.browse.done", &[&name, &done.version]);
                         ui.message = Some((text, true));
                         true

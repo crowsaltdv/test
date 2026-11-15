@@ -61,14 +61,22 @@ desktop. Mods are off until switched on.
   registry can't be reached.
 - **Icons.** Each project's icon is fetched with the list (through the same proxy), scaled to
   128 x 128 and drawn beside its row, in atlas slots the pack screen doesn't share a frame with.
-- **What is offered.** The browser lists the registry's content mods (`.hmod` with data and
-  assets). The registry's native mods (`.hnmod`) are Rust code built into the desktop game, and
-  its shaders need the desktop renderer, so neither can run in a browser.
+- **What is offered.** Everything the registry has for this game is listed, installable ones
+  first. The 11 content mods (`.hmod` with data and assets) and the resource packs install: a pack
+  goes to `resourcepacks/<id>.zip` (size and SHA-256 checked against the index) and is switched on
+  in Options > Resource Packs. The rest are listed as "(desktop only)", with the reason on their
+  page and an inactive button. The registry's native mods (`.hnmod`) are patches to the game's
+  own Rust source, compiled into the desktop game, so a browser, which runs one prebuilt game,
+  can't load them; shader packs need the desktop renderer, modpacks hold native mods, and a
+  `.hmod` with code is one this game doesn't run.
 - **After an install,** restart the game (Reload game): the mod's blocks and items appear in the
   creative tabs and in `/give`. A mod that adds blocks makes the restart take longer, since the
   game rebuilds its block tables once per start.
-- **Drag in a file.** Drop a `.hmod` on the page and it is put in `/game/horizon-mods`, saved in
-  this browser with the worlds. Use **Reload game** to see it in the Mods page, then switch it on.
+- **Upload Mod.** The Mods page's folder button is **Upload Mod...** in the browser (a folder
+  can't be opened): it opens a file picker for a `.hmod`. The page reads the mod's id from its
+  `horizon-mod.toml`, saves it as `horizon-mods/<id>.hmod`, turns it on in `horizon-mods.txt` and
+  offers to reload the game, which reads its mods once at start. A file that isn't a Horizon mod
+  is refused with the reason. Dropping a `.hmod` on the page does the same.
 
 ## Mouse and fullscreen
 

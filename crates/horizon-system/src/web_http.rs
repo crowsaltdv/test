@@ -9,6 +9,15 @@ unsafe extern "C" {
     /// length in `*length`.
     fn horizon_http_get(url: *const c_char, body: *mut *mut u8, length: *mut usize) -> i32;
     fn free(pointer: *mut c_void);
+    /// `web/http.js`: asks the page to open its file picker for a `.hmod` (on the page's thread).
+    fn horizon_upload_hmod();
+}
+
+/// Opens the page's file picker for a `.hmod` to install (the Mods page's upload button). The
+/// page puts the file in `horizon-mods`, turns the mod on and offers to reload the game.
+pub fn upload_hmod() {
+    // SAFETY: the call takes no arguments and touches no Rust memory.
+    unsafe { horizon_upload_hmod() }
 }
 
 /// The body at `url`, at most `max` bytes.
