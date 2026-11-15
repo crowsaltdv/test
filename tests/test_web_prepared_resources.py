@@ -1,9 +1,12 @@
 """The browser page gets the prepared 26.3 folder from the local server as one stream of frames
 (web/prepared-resources.mjs), not one request per file: the folder holds 23 000 files. This pins
 that wire format, which only the page and the server share: a frame is a 4-byte path length, the
-UTF-8 path, a 4-byte size and the bytes, and the declared Content-Length covers all of it.
+UTF-8 path, a 4-byte size and the bytes, and the declared Content-Length covers all of it. It also
+pins which prepared folder a server in this repository picks (locatePrepared): the one prepared
+last, and only one that holds horizon-resources.json.
 """
 import contextlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -103,6 +106,49 @@ class PreparedResourcesTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.code, 404)
         caught.exception.close()
+
+
+@unittest.skipUnless(shutil.which("node"), "node is needed to run the page's server")
+class PreparedFolderDiscoveryTests(unittest.TestCase):
+    """Which prepared folder a server inside this repository serves (locatePrepared)."""
+
+    def locate(self, repository):
+        module = (REPO / "web" / "prepared-resources.mjs").as_uri()
+        script = (
+            f"import({json.dumps(module)}).then(module => "
+            f"console.log(module.locatePrepared(process.argv[1], null) ?? ''))"
+        )
+        result = subprocess.run(
+            [shutil.which("node"), "-e", script, str(repository)],
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        found = result.stdout.strip()
+        return Path(found) if found else None
+
+    @staticmethod
+    def same(path):
+        return os.path.normcase(os.path.realpath(path)) if path else None
+
+    def test_the_folder_prepared_last_is_served(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = Path(temporary)
+            prepared = repository / ".local" / "horizon-client" / "26.3"
+            copy = repository / "26.3"
+            for folder, written in ((prepared, 1_000_000), (copy, 2_000_000)):
+                folder.mkdir(parents=True)
+                stamp = folder / "horizon-resources.json"
+                stamp.write_text("{}")
+                os.utime(stamp, (written, written))
+
+            self.assertEqual(self.same(self.locate(repository)), self.same(copy))
+            # A folder without horizon-resources.json is not a prepared folder, whatever its name.
+            (copy / "horizon-resources.json").unlink()
+            self.assertEqual(self.same(self.locate(repository)), self.same(prepared))
+
+    def test_no_prepared_folder_means_the_page_keeps_its_picker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.assertIsNone(self.locate(Path(temporary)))
 
 
 if __name__ == "__main__":

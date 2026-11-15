@@ -1,4 +1,6 @@
 /.local/
+# A prepared 26.3 folder kept beside .local/ for the browser build (web/serve.mjs loads it by
+# itself). It is Minecraft's decoded content, never committed.
 /target/
 **/__pycache__/
 *.py[cod]

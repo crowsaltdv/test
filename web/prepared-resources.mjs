@@ -2,13 +2,38 @@
 // without the folder picker: `GET /prepared-resources.bin` streams the whole folder as a run of
 // frames, each a 4-byte path length, the UTF-8 path, a 4-byte size and the bytes. One response
 // rather than one request per file: a prepared 26.3 folder holds 23 000 of them.
-// `web/serve.mjs` always answers from the repository's own prepared folder; `web/server.mjs` answers
-// only when the operator names a folder in `HORIZON_WEB_RESOURCES` (the deployed site has none, and
-// must not hold any of Minecraft's files).
-import { createReadStream, readdirSync, statSync } from 'node:fs';
+// `web/serve.mjs` and `web/server.mjs` answer from the prepared folder they find in this repository
+// (see locatePrepared); the deployed site finds none, and must not hold any of Minecraft's files.
+import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const ROUTE = '/prepared-resources.bin';
+
+// The folder a server running in this repository serves, or null: the operator's
+// HORIZON_WEB_RESOURCES when set, else the most recently prepared of a `26.3` folder beside `.local/`
+// (a copy kept for the browser build) and `horizon-prepare`'s `.local/horizon-client/26.3`. Two
+// copies are common, and the newer horizon-resources.json is the one that was prepared last. A
+// folder is only usable when it holds that file; anything else leaves the page's picker in place,
+// as the deployed site does.
+export function locatePrepared(repository, override) {
+  if (override) {
+    const named = resolve(repository, override);
+    return existsSync(join(named, 'horizon-resources.json')) ? named : null;
+  }
+  const prepared = [resolve(repository, '26.3'), resolve(repository, '.26.3')]
+    .map(folder => {
+      const stamp = join(folder, 'horizon-resources.json');
+      return { folder, written: existsSync(stamp) ? statSync(stamp).mtimeMs : -1 };
+    })
+    .filter(candidate => candidate.written >= 0);
+  // A strict comparison keeps the first on a tie, so a copied folder that kept its timestamps still
+  // wins over .local's.
+  let newest = null;
+  for (const candidate of prepared) {
+    if (!newest || candidate.written > newest.written) newest = candidate;
+  }
+  return newest?.folder ?? null;
+}
 
 // Every file of the folder, as paths relative to it. A folder that isn't there throws, which the
 // caller turns into 404: the page then shows its folder picker.
@@ -22,11 +47,15 @@ function listFiles(directory, prefix, result) {
 }
 
 export function preparedResources(directory) {
-  const root = resolve(directory);
+  const root = directory ? resolve(directory) : null;
   // The folder is listed on every request: `horizon-prepare` may have run again since the page
   // loaded, and walking the tree costs a few dozen milliseconds.
   return function handle(req, res, pathname) {
     if (pathname !== ROUTE) return false;
+    if (!root) {
+      res.writeHead(404).end('No prepared resources');
+      return true;
+    }
     let files, sizes, length;
     try {
       files = listFiles(root, '', []);

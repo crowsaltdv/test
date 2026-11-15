@@ -3,7 +3,7 @@ import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { modProxy } from './mod-proxy.mjs';
-import { preparedResources } from './prepared-resources.mjs';
+import { locatePrepared, preparedResources } from './prepared-resources.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const types = new Map([
@@ -13,12 +13,11 @@ const types = new Map([
   ['.png', 'image/png'], ['.svg', 'image/svg+xml'],
   ['.webmanifest', 'application/manifest+json; charset=utf-8'],
 ]);
-// The prepared game files `horizon-prepare` writes into this repository: the page loads them
-// itself, so running the browser build needs no folder picker. HORIZON_WEB_RESOURCES names another
-// folder (absolute, or relative to the repository).
-const prepared = preparedResources(
-  resolve(root, process.env.HORIZON_WEB_RESOURCES || '.local/horizon-client/26.3'),
-);
+// The prepared game files the page loads by itself, so running the browser build needs no folder
+// picker: `horizon-prepare`'s output in this repository (see locatePrepared). HORIZON_WEB_RESOURCES
+// names another folder (absolute, or relative to the repository).
+const preparedFolder = locatePrepared(root, process.env.HORIZON_WEB_RESOURCES);
+const prepared = preparedResources(preparedFolder);
 // The page is served from the repository root, but the app's own files (manifest, service worker,
 // icons) sit in web/ and packaging/: the paths the manifest declares are mapped here, as
 // web/dist.ps1 lays them out when packing.
@@ -52,7 +51,9 @@ createServer((req, res) => {
   res.setHeader('Content-Length', info.size);
   createReadStream(path).pipe(res);
 }).listen(Number(process.env.PORT || 8000), '127.0.0.1', () => {
+  const where = preparedFolder ? preparedFolder.replace(root, '.') : 'none (the page shows its picker)';
   console.log(`Horizon web client: http://127.0.0.1:${process.env.PORT || 8000}`);
+  console.log(`Prepared game files: ${where}`);
 });
 
 // web/sw.js with its cache version set from the wasm this server hands out (web/dist.ps1 does the

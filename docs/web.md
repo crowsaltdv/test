@@ -17,12 +17,12 @@ Open <http://127.0.0.1:8000>. The server binds to loopback and sends the cross-o
 headers required for shared-memory WebAssembly threads. Opening the page as a `file:` URL or
 serving it without those headers will prevent the worker pool from starting.
 
-`web/serve.mjs` also serves the prepared Minecraft 26.3 resources the repository already holds in
-`.local/horizon-client/26.3` (from `horizon-prepare`; `HORIZON_WEB_RESOURCES` names another
-folder). The page copies them into the virtual `/resources` filesystem from one streamed response
-and starts by itself, so a development run needs no folder picker and no second copy of the files.
-**Fullscreen** expands the game to the whole screen and hides the page's top bar; press Escape to
-leave fullscreen.
+`web/serve.mjs` also serves the prepared Minecraft 26.3 resources the repository already holds —
+`horizon-prepare`'s `.local/horizon-client/26.3`, or a `26.3` folder beside it, whichever was
+prepared last; `HORIZON_WEB_RESOURCES` names another folder. The page copies them into the virtual
+`/resources` filesystem from one streamed response and starts by itself, so a development run needs no
+folder picker and no second copy of the files. **Fullscreen** expands the game to the whole screen and
+hides the page's top bar; press Escape to leave fullscreen.
 
 A server without that folder (the deployed site) keeps the picker: choose **Start without game
 files** to reach Horizon's missing-files screen, or **Load prepared game files** and select the
@@ -49,9 +49,10 @@ Render: a fresh build takes far longer than a free instance allows.
 
 `web/dist` holds the page, the loader and the wasm only. It has no Minecraft files, and must
 not: each visitor loads their own prepared game files in the page, which keeps them in their
-browser. Repack and push for every new build. `web/server.mjs` answers the prepared-files routes
-only when `HORIZON_WEB_RESOURCES` names a folder, so a local run of the packed page can load one
-too; the deployed service names none.
+browser. Repack and push for every new build. `web/server.mjs` serves this repository's prepared
+folder when there is one (`.local/horizon-client/26.3`, or a `26.3` folder beside it, or
+`HORIZON_WEB_RESOURCES`), so a local run of the packed page starts by itself too; the deployed
+service finds none.
 
 ## Install as an app
 
