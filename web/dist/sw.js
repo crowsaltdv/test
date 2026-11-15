@@ -5,7 +5,7 @@
 // VERSION is rewritten when the build is packed (web/dist.ps1: the wasm's hash) and when the
 // development server serves this file (web/serve.mjs: the wasm's time and size). A rebuilt game
 // therefore installs a new worker and drops the old cache; nobody has to remember to bump it.
-const VERSION = '4c47046474b1';
+const VERSION = 'c298f81cf0f8';
 const CACHE = `horizon-web-${VERSION}`;
 const SHELL = ['/', '/manifest.webmanifest', '/icons/icon-256.png', '/icons/icon-512.png'];
 

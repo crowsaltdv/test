@@ -215,8 +215,8 @@ impl Game<'_> {
         if !matches!(self.screen, Screen::Inventory | Screen::Creative) || self.title.is_some() {
             return None;
         }
-        let disabled = &self.settings.mods.disabled;
-        let Some(shown) = self.panel.shown(|id| !disabled.contains(id)) else {
+        let mods = &self.settings.mods;
+        let Some(shown) = self.panel.shown(|id| mods.native_is_on(id)) else {
             self.panel.of = None;
             self.panel.fuel_popup = None;
             self.panel.stacks.clear();
@@ -252,8 +252,8 @@ impl Game<'_> {
     }
     /// What the panel shows now.
     fn panel_shown(&self) -> Option<&Shown> {
-        let disabled = &self.settings.mods.disabled;
-        self.panel.shown(|id| !disabled.contains(id))
+        let mods = &self.settings.mods;
+        self.panel.shown(|id| mods.native_is_on(id))
     }
     /// The player did `event` on `owner`'s panel.
     pub(super) fn panel_event(&mut self, owner: &Owner, event: BrowserEvent) {

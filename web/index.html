@@ -20,6 +20,8 @@
     button[hidden] { display: none; }
     #fullscreen { white-space: nowrap; }
     #status { color: #aab7c8; min-width: 190px; }
+    #loading-progress { flex: 0 0 100%; width: 100%; height: 7px; accent-color: #8b9dff; }
+    #loading-progress[hidden] { display: none; }
     main { min-height: 0; display: grid; place-items: center; padding: 12px; }
     #canvas { width: min(100%, 1600px); height: min(100%, 900px); min-height: 320px; background: #000; outline: none; }
     /* Fullscreen is the game and nothing else: no title, buttons or status. Escape leaves it. */
@@ -48,11 +50,13 @@
     <button id="fullscreen" type="button" aria-pressed="false">Fullscreen</button>
     <button id="copy-log" type="button" title="Copy the game's recent log lines">Copy game log</button>
     <input id="files" type="file" webkitdirectory directory multiple>
-    <span id="status">Loading the game; Play is ready when this turns into "Runtime ready".</span>
+    <span id="status">Loading Horizon…</span>
+    <progress id="loading-progress" aria-label="Loading Horizon"></progress>
   </header>
   <main><canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas></main>
   <script>
     const status = document.querySelector('#status');
+    const loadingProgress = document.querySelector('#loading-progress');
     const picker = document.querySelector('#files');
     const play = document.querySelector('#play');
     const loadFolder = document.querySelector('#load-folder');
@@ -62,6 +66,24 @@
     let savedPaths = null;
     let preparedHint = '';
     let showFolderFallback = false;
+    let runtimeDependenciesMax = 0;
+    // Replaced by web/pack.ps1 for builds that compile native mods into the game.
+    const BROWSER_NATIVE_MODS = [];
+
+    function showProgress(message, completed = null, total = null) {
+      status.textContent = message;
+      loadingProgress.hidden = false;
+      if (Number.isFinite(completed) && Number.isFinite(total) && total > 0) {
+        loadingProgress.max = total;
+        loadingProgress.value = Math.max(0, Math.min(completed, total));
+      } else {
+        loadingProgress.max = 1;
+        loadingProgress.removeAttribute('value');
+      }
+    }
+    function hideProgress() {
+      loadingProgress.hidden = true;
+    }
 
     const DB_NAME = 'horizon-prepared-resources';
     const DB_VERSION = 2;
@@ -105,15 +127,23 @@
     async function savePreparedFiles(entries) {
       const db = await openResourceDb();
       try {
-        const tx = db.transaction(['files', 'meta'], 'readwrite');
-        const done = transactionDone(tx);
-        const files = tx.objectStore('files');
-        const meta = tx.objectStore('meta');
-        files.clear();
-        meta.delete('resources');
-        for (const entry of entries) files.put(entry.blob, entry.path);
-        meta.put({ paths: entries.map(entry => entry.path), savedAt: Date.now() }, 'resources');
-        await done;
+        const clear = db.transaction(['files', 'meta'], 'readwrite');
+        const cleared = transactionDone(clear);
+        clear.objectStore('files').clear();
+        clear.objectStore('meta').delete('resources');
+        await cleared;
+        for (let i = 0; i < entries.length; i += 128) {
+          const batch = entries.slice(i, i + 128);
+          const tx = db.transaction('files', 'readwrite');
+          const done = transactionDone(tx);
+          for (const entry of batch) tx.objectStore('files').put(entry.blob, entry.path);
+          await done;
+          showProgress(`Saving prepared files in this browser (${Math.min(i + batch.length, entries.length)}/${entries.length})…`, i + batch.length, entries.length);
+        }
+        const save = db.transaction('meta', 'readwrite');
+        const saved = transactionDone(save);
+        save.objectStore('meta').put({ paths: entries.map(entry => entry.path), savedAt: Date.now() }, 'resources');
+        await saved;
       } finally {
         db.close();
       }
@@ -385,7 +415,8 @@
       if (gameStarted || launching) return;
       launching = true;
       updateButtons();
-      status.textContent = 'Restoring saved worlds from this browser…';
+      showProgress('Restoring saved worlds from this browser…');
+      Module.FS.mkdirTree('/game');
       try {
         await restoreSavedWorlds();
         migrateWebDefaults();
@@ -393,14 +424,35 @@
         console.error(error);
         status.textContent = `Could not restore saved worlds; starting without browser saves: ${error.message || error}`;
       }
+      try {
+        seedBrowserNativeModsOff();
+      } catch (error) {
+        console.error('Could not set the browser mod defaults:', error);
+      }
       launching = false;
       gameStarted = true;
       updateButtons();
-      status.textContent = 'Starting Horizon…';
-      Module.FS.mkdirTree('/game');
+      showProgress('Starting Horizon…');
       flushPendingMods();
       Module.callMain(args);
+      hideProgress();
       status.textContent = 'Horizon is running. Worlds are saved in this browser automatically. Click the game to capture the mouse.';
+    }
+    function seedBrowserNativeModsOff() {
+      if (!BROWSER_NATIVE_MODS.length) return;
+      const path = '/game/horizon-mods.txt';
+      const current = pathExists(path)
+        ? new TextDecoder().decode(Module.FS.readFile(path))
+        : '';
+      const known = new Set(Array.from(
+        current.matchAll(/^mod\.([a-z0-9_-]+):(?:true|false)[ \t\r]*$/gm),
+        match => match[1],
+      ));
+      const missing = BROWSER_NATIVE_MODS.filter(id => !known.has(id));
+      if (!missing.length) return;
+      const separator = current && !current.endsWith('\n') ? '\n' : '';
+      const defaults = missing.map(id => `mod.${id}:false\n`).join('');
+      Module.FS.writeFile(path, new TextEncoder().encode(current + separator + defaults));
     }
     function updateButtons() {
       play.disabled = !runtimeReady || gameStarted || launching;
@@ -423,8 +475,8 @@
         const target = `/resources/${path}`;
         FS.mkdirTree(target.slice(0, target.lastIndexOf('/')));
         FS.writeFile(target, new Uint8Array(await blob.arrayBuffer()));
-        if (i % 20 === 0 || i + 1 === entries.length) {
-          status.textContent = `${label} ${i + 1}/${entries.length} files…`;
+        if (i % 100 === 0 || i + 1 === entries.length) {
+          showProgress(`${label} (${i + 1}/${entries.length} files)…`, i + 1, entries.length);
         }
       }
     }
@@ -436,18 +488,21 @@
     // one stream of frames (see web/prepared-resources.mjs), not one request per file: 23 000.
     async function loadPreparedFromServer() {
       let response;
+      showProgress('Checking for prepared game files on the server…');
       try {
         response = await fetch('/prepared-resources.bin', { cache: 'no-store' });
       } catch {
+        hideProgress();
         return false;
       }
       if (!response.ok) {
         // Says which folders the server looked in, instead of leaving Play unexplained.
         preparedHint = (await response.text().catch(() => '')).trim();
+        hideProgress();
         return false;
       }
       const total = Number(response.headers.get('X-Horizon-Files')) || 0;
-      status.textContent = `Copying ${total} prepared files from the server…`;
+      showProgress(`Installing prepared game files (${total} files)…`, 0, total);
       // The copy is kept in this browser while it streams in, so the next start copies nothing:
       // files go to IndexedDB in small batches, and the manifest naming them is written last, so a
       // start never sees half a copy. A browser that cannot keep them (a full quota, private mode)
@@ -539,7 +594,9 @@
           if (storeBatch.length >= 32 || storeBytes >= 32 * 1024 * 1024) await flushStore(false);
         }
         copied++;
-        if (copied % 500 === 0) status.textContent = `Copying prepared files ${copied}${total ? `/${total}` : ''}…`;
+        if (copied % 100 === 0 || (total && copied === total)) {
+          showProgress(`Installing prepared game files (${copied}${total ? `/${total}` : ''})…`, copied, total);
+        }
       }
       if (!manifest) throw new Error('The prepared files have no top-level horizon-resources.json');
       await flushStore(true);
@@ -561,39 +618,23 @@
       return true;
     }
 
-    // The saved copy starts without copying anything again, as long as the server's folder still
-    // holds the same files as when it was saved: a HEAD asks for its file count. null is no answer
-    // (no folder there, or no network): the saved copy is then all the more right.
-    async function savedCopyMatchesServer(count) {
-      try {
-        const response = await fetch('/prepared-resources.bin', { method: 'HEAD', cache: 'no-store' });
-        if (!response.ok) return null;
-        return (Number(response.headers.get('X-Horizon-Files')) || 0) === count;
-      } catch {
-        return null;
-      }
-    }
-
-    // Play starts from the prepared 26.3 copy saved in this browser when it is still the server's
-    // folder, copies the server's folder (and keeps it) when it is not, and with neither says why
-    // and offers the picker.
+    // Play always prefers the prepared 26.3 files already saved in this browser. The server or
+    // folder picker is needed only for the first install or if the saved copy is incomplete.
     play.addEventListener('click', async () => {
       if (!runtimeReady || gameStarted || launching) return;
       play.disabled = true;
       updateButtons();
       try {
         if (savedPaths) {
-          if (await savedCopyMatchesServer(savedPaths.length) !== false) {
-            try {
-              status.textContent = 'Starting from the prepared files saved in this browser…';
-              const entries = await loadSavedFiles(savedPaths);
-              await copyFilesIntoGame(entries, 'Loading the saved prepared files');
-              await launch(['--resources', '/resources', '--game-dir', '/game']);
-              return;
-            } catch (error) {
-              console.warn('The saved prepared files did not load; copying from the server:', error);
-              savedPaths = null;
-            }
+          try {
+            showProgress('Reading prepared files saved in this browser…');
+            const entries = await loadSavedFiles(savedPaths);
+            await copyFilesIntoGame(entries, 'Loading prepared files saved in this browser');
+            await launch(['--resources', '/resources', '--game-dir', '/game']);
+            return;
+          } catch (error) {
+            console.warn('The saved prepared files did not load; copying them again:', error);
+            savedPaths = null;
           }
         }
         if (await loadPreparedFromServer()) {
@@ -604,6 +645,7 @@
         showFolderFallback = true;
       } catch (error) {
         console.error(error);
+        hideProgress();
         status.textContent = `Could not start: ${error.message || error}`;
       } finally {
         updateButtons();
@@ -701,7 +743,7 @@
         if (!entries.some(entry => entry.path === 'horizon-resources.json')) {
           throw new Error('The selected folder has no top-level horizon-resources.json. Select the prepared 26.3 resources folder.');
         }
-        status.textContent = `Saving ${entries.length} prepared files in this browser…`;
+        showProgress(`Saving ${entries.length} prepared files in this browser…`, 0, entries.length);
         try {
           await savePreparedFiles(entries);
           savedPaths = entries.map(entry => entry.path);
@@ -714,6 +756,7 @@
         await launch(['--resources', '/resources', '--game-dir', '/game']);
       } catch (error) {
         console.error(error);
+        hideProgress();
         status.textContent = `Could not start: ${error.message || error}`;
         updateButtons();
       }
@@ -728,8 +771,21 @@
       canvas: document.querySelector('#canvas'),
       print: text => { keepLog(text); console.log(text); },
       printErr: text => { keepLog(text); console.error(text); },
+      setStatus(message) {
+        if (!runtimeReady && message) showProgress('Loading Horizon…');
+      },
+      monitorRunDependencies(remaining) {
+        if (runtimeReady) return;
+        runtimeDependenciesMax = Math.max(runtimeDependenciesMax, remaining);
+        showProgress(
+          'Loading Horizon…',
+          runtimeDependenciesMax - remaining,
+          runtimeDependenciesMax,
+        );
+      },
       async onRuntimeInitialized() {
         runtimeReady = true;
+        hideProgress();
         if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
         window.setInterval(saveWorldsToBrowser, 3000);
         document.addEventListener('visibilitychange', () => {
@@ -750,7 +806,7 @@
         status.textContent = storageUnavailable
           ? 'Runtime ready. Browser storage is unavailable.'
           : savedPaths
-            ? 'Runtime ready. Play starts from the copy saved in this browser.'
+            ? 'Runtime ready. Play loads prepared files saved in this browser.'
             : 'Runtime ready. Press Play.';
       },
       onAbort(reason) { status.textContent = `Horizon stopped: ${reason}`; }

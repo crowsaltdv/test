@@ -2,7 +2,9 @@ param(
     # The build folder holding Emscripten's loader and the wasm. Without it, the loader and wasm
     # already in dist (put there by web/build-native.ps1, say) stay, and only the app's own files
     # are packed again.
-    [string]$From
+    [string]$From,
+    # Native mod ids compiled into this browser build (web/build-native.ps1).
+    [string[]]$NativeMods = @()
 )
 # Packs a browser build into web/dist/, the folder Render publishes (render.yaml): the page,
 # Emscripten's loader, the wasm and the app's own files (manifest, service worker, icons), and none
@@ -23,6 +25,9 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 # The page loads the loader from the build folder when serve.mjs serves it; here it sits beside it.
 $page = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'index.html'), $utf8)
 $page = $page -replace '/target/wasm32-unknown-emscripten/fast/horizon-client\.js', '/horizon-client.js'
+$nativeMods = @($NativeMods | ForEach-Object { ($_ -replace '#.*', '').Trim() } | Where-Object { $_ -match '^[a-z0-9_-]+$' })
+$nativeModsJson = ConvertTo-Json -InputObject $nativeMods -Compress
+$page = $page.Replace('const BROWSER_NATIVE_MODS = [];', "const BROWSER_NATIVE_MODS = $nativeModsJson;")
 [System.IO.File]::WriteAllText((Join-Path $dist 'index.html'), $page, $utf8)
 # Installable app: web/manifest.webmanifest names the icons, web/sw.js keeps the page, the loader
 # and the wasm on the player's disk. The worker's cache version is the wasm's hash, so a rebuilt

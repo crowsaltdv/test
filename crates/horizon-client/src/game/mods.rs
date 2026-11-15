@@ -142,7 +142,11 @@ fn content_root_at(
                 return false;
             }
             let on = if native.contains(path) {
-                !disabled.contains(&m.id)
+                if cfg!(target_os = "emscripten") {
+                    enabled.contains(&m.id)
+                } else {
+                    !disabled.contains(&m.id)
+                }
             } else {
                 enabled.contains(&m.id)
             } || dev.contains(path);
@@ -737,7 +741,7 @@ impl Game<'_> {
     /// Mixin code checks `native_on` itself.
     pub(super) fn sync_native_switches(&self) {
         for id in horizon_client::mod_api::mod_ids() {
-            let on = !self.settings.mods.disabled.contains(*id);
+            let on = self.settings.mods.native_is_on(id);
             horizon_client::mod_api::set_mod_on(id, on);
         }
     }

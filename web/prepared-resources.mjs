@@ -64,9 +64,9 @@ export function preparedResources(repository, override) {
       'X-Horizon-Files': String(files.length),
       'Cache-Control': 'no-store',
     });
-    // A HEAD answers with the shape of the run and no body: the page compares its file count with
-    // the copy saved in the browser before starting from it, so a re-prepared folder is copied
-    // again while an unchanged one is not.
+    // A HEAD answers with the file count and no body for operators or older browser pages. The
+    // current page uses its IndexedDB copy directly and only requests this stream when it has no
+    // saved copy.
     if (req.method === 'HEAD') { res.end(); return true; }
     void sendFiles(root, files, sizes, res);
     return true;

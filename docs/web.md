@@ -20,18 +20,18 @@ serving it without those headers will prevent the worker pool from starting.
 `web/serve.mjs` also serves the prepared Minecraft 26.3 resources the repository already holds — the
 `26.3` folder beside it, or `horizon-prepare`'s `.local/horizon-client/26.3`; `HORIZON_WEB_RESOURCES`
 names another folder. **Play** copies them into the virtual `/resources` filesystem from one streamed
-response and starts, so a run needs no folder picker and no second copy of the files. The copy is
-kept in the browser's IndexedDB: after the first start, Play loads it instead of copying again, and
-only copies again when the server's folder no longer holds the same number of files (it compares
-counts with a `HEAD` request). A server without the folder says where it looked on the page's status
-line. **Fullscreen** expands the game to the whole screen and hides the page's top bar; press Escape
-to leave fullscreen.
+response and starts, so a run needs no folder picker. The files are saved in the browser's IndexedDB:
+after the first start, Play reads the saved copy directly and does not request the files from the
+server again. A server without the folder says where it looked on the page's status line. **Fullscreen**
+expands the game to the whole screen and hides the page's top bar; press Escape to leave fullscreen.
 
 A server without that folder keeps one **Play** button: pressing it starts from the copy saved in
 IndexedDB of an earlier visit, or, with no saved copy either, explains on the status line and shows
 **Load a folder instead…** — which copies the prepared 26.3 resources directory produced by
-`horizon-prepare` into `/resources` before starting and saves it in IndexedDB for later visits.
-The generated files are not included in this repository.
+`horizon-prepare` into `/resources` before starting and saves it in IndexedDB for later visits. The
+generated files are not included in this repository. The page shows a progress bar while Horizon
+loads and while it installs the prepared files into the browser; clearing the site's browser data
+removes that saved copy.
 
 The build script uses `cargo +nightly -Z build-std=std,panic_abort`, because the distributed
 Emscripten Rust standard library is not compiled for shared-memory atomics. It builds with no
@@ -72,11 +72,13 @@ icon. The page shows the same offer as an **Install app** button while the brows
   stamped at build time with a hash of the wasm (by `web/pack.ps1`) or with its time and size (by
   `web/serve.mjs`): a rebuilt game installs a new worker and drops the old cache, and nobody bumps a
   number by hand.
-- The prepared game files and `/mod-proxy` always go to the network, never the cache: they are live
-  data, one of them the player's own folder. Saves and options stay in IndexedDB as above.
+- The prepared game file endpoint and `/mod-proxy` bypass the service worker cache. The page saves
+  prepared files, saves and options in IndexedDB; after the first copy, Play reads those prepared
+  files locally and works without the server. Clearing this site's browser data removes the saved
+  files and worlds.
 - The installed app is this site's page: it needs the site reachable at least once, and it plays
-  from the prepared files the page last loaded (the deployed page keeps its picker). Deleting the
-  site's browser data removes both the cached app and the saved files.
+  from the prepared files saved in IndexedDB (the deployed page keeps its picker for a first load).
+  Deleting the site's browser data removes both the cached app and the saved files.
 
 `web/serve.mjs` serves the same files from `web/` and `packaging/icons/`, so a development run can
 be installed too. The browser's offer appears when it finds the page installable; the button says

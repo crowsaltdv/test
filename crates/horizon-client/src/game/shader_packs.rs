@@ -154,7 +154,7 @@ pub(super) fn active_pack<'a>(picked: &'a str, mods: &ModList) -> &'a str {
     if picked.strip_prefix("native-").is_some_and(|id| {
         mods.installed
             .iter()
-            .any(|m| m.id == id && m.native.is_some() && mods.disabled.contains(id))
+            .any(|m| m.id == id && m.native.is_some() && !mods.native_is_on(id))
     }) {
         ""
     } else {

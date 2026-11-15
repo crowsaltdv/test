@@ -80,4 +80,4 @@ try {
 $out = Join-Path $modded 'target\wasm32-unknown-emscripten\fast'
 # The page, the app's files (manifest, worker, icons) and the loader and wasm, packed as
 # web/dist.ps1 packs them.
-& (Join-Path $PSScriptRoot 'pack.ps1') -From $out
+& (Join-Path $PSScriptRoot 'pack.ps1') -From $out -NativeMods $ids

@@ -1,8 +1,8 @@
 //! Which of the installed Horizon mods are on (`docs/mods.md`), kept in
 //! `horizon-mods.txt` beside `options.txt` as `mod.<id>:true` lines. Every
-//! mod is off until the player turns it on in Options > Mods. A native mod is
-//! built in, so on until turned off (`mod.<id>:false`); the launcher builds
-//! only the native mods whose line is `true`.
+//! mod is off until the player turns it on in Options > Mods. Desktop native
+//! mods are on until turned off (`mod.<id>:false`); browser native mods use
+//! the same off-by-default setting as content mods.
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -22,8 +22,9 @@ pub const NOT_BUILT: &str = "Installed, not built into this game: build the game
 pub struct ModList {
     /// Ids of the mods the player turned on.
     pub enabled: BTreeSet<String>,
-    /// Ids of the native mods the player turned off: they rest
-    /// (`native_on`) until the launcher's next build leaves them out.
+    /// Ids of desktop native mods the player turned off: they rest
+    /// (`native_on`) until the launcher's next build leaves them out. The
+    /// browser build uses `enabled` for native mods too, so these are off.
     pub disabled: BTreeSet<String>,
     /// The keys the player chose for mods' keys, mod id → key name → key
     /// (`key.<id>.<name>:key.keyboard.x` lines).
@@ -43,8 +44,8 @@ pub struct Installed {
     pub problem: Option<String>,
     /// Loaded with `--dev-mod`: always on.
     pub dev: bool,
-    /// A native mod (`game/native_hooks.rs`): built into the game, on until
-    /// the player turns it off, and its settings page.
+    /// A native mod (`game/native_hooks.rs`): built into the game, with its
+    /// settings page.
     pub native: Option<NativePage>,
 }
 
@@ -122,11 +123,21 @@ impl ModList {
         self.installed.get(i).is_some_and(|m| {
             m.dev
                 || if m.native.is_some() {
-                    !self.disabled.contains(&m.id)
+                    self.native_is_on(&m.id)
                 } else {
                     self.enabled.contains(&m.id)
                 }
         })
+    }
+    /// Whether a built-in native mod is active. Desktop builds keep the
+    /// historical on-by-default behavior; the browser build starts every
+    /// built-in mod off unless its id is explicitly enabled.
+    pub fn native_is_on(&self, id: &str) -> bool {
+        if cfg!(target_os = "emscripten") {
+            self.enabled.contains(id)
+        } else {
+            !self.disabled.contains(id)
+        }
     }
     /// Turns installed mod `i` on or off (a dev mod stays on). A native mod's
     /// line says `false` when off, so that the launcher's next build leaves
@@ -145,15 +156,17 @@ impl ModList {
         let Some(m) = self.installed.get(i).filter(|m| !m.dev) else {
             return;
         };
-        if m.native.is_some() {
-            if self.disabled.remove(&m.id) {
-                self.enabled.insert(m.id.clone());
+        let (id, native) = (m.id.clone(), m.native.is_some());
+        if native {
+            if self.native_is_on(&id) {
+                self.enabled.remove(&id);
+                self.disabled.insert(id);
             } else {
-                self.enabled.remove(&m.id);
-                self.disabled.insert(m.id.clone());
+                self.disabled.remove(&id);
+                self.enabled.insert(id);
             }
-        } else if !self.enabled.remove(&m.id) {
-            self.enabled.insert(m.id.clone());
+        } else if !self.enabled.remove(&id) {
+            self.enabled.insert(id);
         }
     }
 }
