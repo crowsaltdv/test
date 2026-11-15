@@ -1,0 +1,18 @@
+# Render blueprint for the browser build (docs/web.md, "Hosting on Render").
+# A static site that publishes web/dist, which `web/dist.ps1` fills; nothing is built on Render.
+services:
+  - type: web
+    runtime: static
+    name: horizon-web
+    staticPublishPath: web/dist
+    headers:
+      # Shared-memory WebAssembly threads need the page cross-origin isolated.
+      - path: /*
+        name: Cross-Origin-Opener-Policy
+        value: same-origin
+      - path: /*
+        name: Cross-Origin-Embedder-Policy
+        value: require-corp
+      - path: /*
+        name: Cross-Origin-Resource-Policy
+        value: same-origin

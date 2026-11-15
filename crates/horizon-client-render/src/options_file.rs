@@ -90,6 +90,10 @@ const GRAPHICS_PRESET: &[&str] = &["fast", "fancy", "fabulous", "custom"];
 /// Horizon's render distance cap (vanilla stops at 32): the server protocol's
 /// view distance tops out at 127 anyway.
 pub const MAX_RENDER_DISTANCE: i32 = 128;
+/// The render and simulation distance a new options file starts with: vanilla's 12, and 8 in a
+/// browser (Emscripten, docs/web.md), where each chunk of view costs WebGL calls the desktop's
+/// drivers don't charge, and 12 stalled the page for hundreds of milliseconds at a time.
+pub const DEFAULT_RENDER_DISTANCE: i32 = if cfg!(target_os = "emscripten") { 8 } else { 12 };
 const INACTIVITY: &[&str] = &["minimized", "afk"];
 const CLOUDS: &[&str] = &["false", "fast", "true"];
 const MAIN_HAND: &[&str] = &["left", "right"];
@@ -162,8 +166,8 @@ static TABLE: LazyLock<Vec<Def>> = LazyLock::new(|| {
         b("reducedDebugInfo", false),
         def("renderClouds", O(Clouds), V::Int(2)),
         i("cloudRange", 2, 128, 128),
-        i("renderDistance", 2, MAX_RENDER_DISTANCE, 12),
-        i("simulationDistance", 5, 32, 12),
+        i("renderDistance", 2, MAX_RENDER_DISTANCE, DEFAULT_RENDER_DISTANCE),
+        i("simulationDistance", 5, 32, DEFAULT_RENDER_DISTANCE),
         u("screenEffectScale", 1.0),
         def("soundDevice", O(AnyStr), V::Str(String::new())),
         b("vignette", true),

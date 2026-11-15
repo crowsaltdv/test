@@ -871,8 +871,14 @@ impl ApplicationHandler for Split<'_> {
             ))
             .and_then(|s| s.window.current_monitor()?.refresh_rate_millihertz())
             .map_or(60, |mhz| mhz.div_ceil(1000) as i32);
-        // Offscreen, nothing presents: no display paces the frames.
-        if !(self.host.settings.vsync && limit >= refresh_hz && windows::presents(self.offscreen)) {
+        // Offscreen, nothing presents: no display paces the frames. In a browser (Emscripten,
+        // docs/web.md) the page's animation frame does, once per refresh: a sleep and spin here
+        // would hold the page's thread for the rest of the slot, and miss the next refresh by
+        // a little as often as it kept the frame rate down.
+        let browser = cfg!(target_os = "emscripten");
+        if !(browser
+            || (self.host.settings.vsync && limit >= refresh_hz && windows::presents(self.offscreen)))
+        {
             horizon_client::window::end_frame(&mut self.limiter, limit, &mut self.clock);
         }
     }

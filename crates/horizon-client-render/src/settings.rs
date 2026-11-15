@@ -222,8 +222,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             fov: 70.0,
-            render_distance: 12,
-            simulation_distance: 12,
+            render_distance: crate::options_file::DEFAULT_RENDER_DISTANCE,
+            simulation_distance: crate::options_file::DEFAULT_RENDER_DISTANCE,
             sensitivity: 0.5,
             master_volume: 1.0,
             volumes: [1.0; 11],

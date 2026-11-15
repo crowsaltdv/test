@@ -268,6 +268,24 @@
         db?.close();
       }
     }
+    // The browser build starts at render and simulation distance 8, not 12: each chunk of view costs
+    // WebGL calls, and 12 stalled the page for hundreds of milliseconds while terrain loaded. Options
+    // saved before that still say 12, which was only the old default: they move to 8 once, and what
+    // is chosen in the game's options afterwards stays.
+    function migrateWebDefaults() {
+      const key = 'horizon-web-defaults-1';
+      try {
+        if (localStorage.getItem(key)) return;
+        if (pathExists('/game/options.txt')) {
+          const text = new TextDecoder().decode(Module.FS.readFile('/game/options.txt'));
+          const next = text.replace(/^(renderDistance|simulationDistance):12[ \t\r]*$/gm, '$1:8');
+          if (next !== text) Module.FS.writeFile('/game/options.txt', new TextEncoder().encode(next));
+        }
+        localStorage.setItem(key, '1');
+      } catch (error) {
+        console.warn('Could not move saved options to the browser defaults:', error);
+      }
+    }
     async function launch(args) {
       if (gameStarted || launching) return;
       launching = true;
@@ -275,6 +293,7 @@
       status.textContent = 'Restoring saved worlds from this browser…';
       try {
         await restoreSavedWorlds();
+        migrateWebDefaults();
       } catch (error) {
         console.error(error);
         status.textContent = `Could not restore saved worlds; starting without browser saves: ${error.message || error}`;

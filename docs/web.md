@@ -30,6 +30,20 @@ Emscripten Rust standard library is not compiled for shared-memory atomics. It b
 default features: no audio, controllers or Horizon extras. Emscripten emits
 `target/wasm32-unknown-emscripten/fast/horizon-client.js` and `horizon_client.wasm`.
 
+## Hosting on Render
+
+`render.yaml` is a blueprint for a static site that publishes `web/dist` with the
+cross-origin isolation headers the page needs (without them the worker threads never start). The
+game is not built on Render: a fresh build takes far longer than a free instance allows.
+
+1. Build and pack on your machine: `./web/dist.ps1` (`-SkipBuild` packs the last build).
+2. Commit `web/dist` (the wasm is about 70 MB, under GitHub's 100 MB limit) and push.
+3. In Render, choose **New, Blueprint** and pick the repository.
+
+`web/dist` holds the page, the loader and the wasm only. It has no Minecraft files, and must
+not: each visitor loads their own prepared game files in the page, which keeps them in their
+browser. Repack and push for every new build.
+
 ## Mouse and fullscreen
 
 The game turns its view with the browser's pointer lock, which hides the cursor and keeps it from
@@ -42,6 +56,34 @@ reaching the edge of the screen. A browser grants the lock only to a click or a 
   break a block.
 - Escape releases the lock, as in every browser, and pauses the game. The page's fullscreen has
   the same lock; Escape again leaves fullscreen.
+
+## Performance
+
+A frame counter that averages over a second hides stalls: a burst of 7 ms frames and one 300 ms
+freeze still read as a high rate. Measure frame times (the longest, not the mean), as the numbers
+below were: sprint-flying into new terrain in a new world for 14 seconds.
+
+| | Frames over 20 ms | Median frame | Worst frame |
+|---|---|---|---|
+| Render distance 12, before | 61 to 84 | 8 ms | 450 to 870 ms |
+| Render distance 8, after | 0 | 2 ms | 12 ms |
+
+What changed, and why:
+
+- **Render distance 8 by default** (`DEFAULT_RENDER_DISTANCE`, simulation distance too). In a
+  browser every chunk of view costs WebGL calls, and at 12 the page stalled for hundreds of
+  milliseconds at a time while terrain loaded. The page moves options saved with the old 12 to 8
+  once (`migrateWebDefaults`, remembered in `localStorage`); what you set in the game's options
+  afterwards stays. Higher still works, at the cost of stalls on slower machines.
+- **No software frame limiter.** The page's animation frame paces rendering once per refresh;
+  the desktop limiter sleeps and spins on the window's thread, which in a browser holds the page
+  for the rest of every frame and misses the next refresh by a little.
+- **Fewer GL calls per draw** (`third_party/wgpu-hal`, `gles/queue.rs`). WebGL has no base
+  vertex, so the renderer's per-chunk draws point every vertex attribute further into the buffer
+  first. It used to point them back after each draw, bind the buffer once per attribute and say
+  "enable" and "divisor" again for the per-chunk origin: about 23 GL calls per draw. Now the
+  pointers stay where the last draw left them until something needs them at base 0, the buffer is
+  bound once and unchanged state isn't repeated: about 10.
 
 ## Browser limits
 
