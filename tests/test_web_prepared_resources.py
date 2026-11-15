@@ -103,8 +103,12 @@ class PreparedResourcesTests(unittest.TestCase):
             with serving(Path(temporary) / "missing") as port:
                 with self.assertRaises(urllib.error.HTTPError) as caught:
                     urllib.request.urlopen(f"http://127.0.0.1:{port}/prepared-resources.bin")
+                # The page shows this on its status line, so it has to say where the server looked.
+                said = caught.exception.read().decode("utf-8")
 
         self.assertEqual(caught.exception.code, 404)
+        self.assertIn("No prepared game files: looked for", said)
+        self.assertIn("missing", said)
         caught.exception.close()
 
 
@@ -130,20 +134,19 @@ class PreparedFolderDiscoveryTests(unittest.TestCase):
     def same(path):
         return os.path.normcase(os.path.realpath(path)) if path else None
 
-    def test_the_folder_prepared_last_is_served(self):
+    def test_the_26_3_folder_beside_the_repository_is_served(self):
         with tempfile.TemporaryDirectory() as temporary:
             repository = Path(temporary)
             prepared = repository / ".local" / "horizon-client" / "26.3"
-            copy = repository / "26.3"
-            for folder, written in ((prepared, 1_000_000), (copy, 2_000_000)):
+            beside = repository / "26.3"
+            for folder in (prepared, beside):
                 folder.mkdir(parents=True)
-                stamp = folder / "horizon-resources.json"
-                stamp.write_text("{}")
-                os.utime(stamp, (written, written))
+                (folder / "horizon-resources.json").write_text("{}")
 
-            self.assertEqual(self.same(self.locate(repository)), self.same(copy))
+            # The folder beside the repository wins over horizon-prepare's own output.
+            self.assertEqual(self.same(self.locate(repository)), self.same(beside))
             # A folder without horizon-resources.json is not a prepared folder, whatever its name.
-            (copy / "horizon-resources.json").unlink()
+            (beside / "horizon-resources.json").unlink()
             self.assertEqual(self.same(self.locate(repository)), self.same(prepared))
 
     def test_no_prepared_folder_means_the_page_keeps_its_picker(self):

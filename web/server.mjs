@@ -1,14 +1,14 @@
 // Production server (Render, render.yaml): serves web/dist with the cross-origin isolation
 // headers and the registry proxy the in-game mod browser uses. `node web/server.mjs`.
-// It also serves this repository's prepared 26.3 folder when there is one (web/prepared-resources.mjs,
-// locatePrepared), so a local run of the packed page starts by itself; the deployed site finds none,
-// and holds and serves none of Minecraft's files.
+// It also serves the prepared 26.3 folder it finds in this repository when there is one
+// (web/prepared-resources.mjs), so a local run of the packed page starts by itself. The deployed
+// site must find none: Minecraft's files are the player's, not the site's.
 import { createServer } from 'node:http';
 import { createReadStream, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { modProxy } from './mod-proxy.mjs';
-import { locatePrepared, preparedResources } from './prepared-resources.mjs';
+import { preparedResources } from './prepared-resources.mjs';
 
 const root = resolve(fileURLToPath(new URL('./dist', import.meta.url)));
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -18,7 +18,7 @@ const types = new Map([
   ['.css', 'text/css; charset=utf-8'], ['.png', 'image/png'], ['.svg', 'image/svg+xml'],
   ['.webmanifest', 'application/manifest+json; charset=utf-8'],
 ]);
-const prepared = preparedResources(locatePrepared(repository, process.env.HORIZON_WEB_RESOURCES));
+const prepared = preparedResources(repository, process.env.HORIZON_WEB_RESOURCES);
 
 createServer((req, res) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');

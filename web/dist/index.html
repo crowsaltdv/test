@@ -72,6 +72,7 @@
     let launching = false;
     let savedPaths = null;
     let autoResources = false;
+    let preparedHint = '';
 
     const DB_NAME = 'horizon-prepared-resources';
     const DB_VERSION = 2;
@@ -453,20 +454,23 @@
       }
     }
 
-    // The local server (web/serve.mjs) serves the prepared 26.3 folder the repository already has
-    // (.local/horizon-client/26.3, or HORIZON_WEB_RESOURCES): the page copies it into /resources by
-    // itself and starts, so developing the browser build needs no folder picker. A server without
-    // the route answers 404, and the picker stays. The folder arrives as one stream of frames (see
-    // web/prepared-resources.mjs), not one request per file: there are 23 000.
+    // The server in front of the page (web/serve.mjs, or web/server.mjs on your own machine) serves
+    // the prepared 26.3 folder it finds next to the repository: the page copies it into /resources
+    // by itself and starts, so there is no folder picker and no second copy of the files. A server
+    // without the folder answers 404 with where it looked, and the picker stays. The folder arrives
+    // as one stream of frames (see web/prepared-resources.mjs), not one request per file: 23 000.
     async function loadPreparedFromServer() {
-      if (!['127.0.0.1', 'localhost', '[::1]', '::1'].includes(location.hostname)) return false;
       let response;
       try {
         response = await fetch('/prepared-resources.bin', { cache: 'no-store' });
       } catch {
         return false;
       }
-      if (!response.ok) return false;
+      if (!response.ok) {
+        // Says which folders the server looked in, instead of leaving the picker unexplained.
+        preparedHint = (await response.text().catch(() => '')).trim();
+        return false;
+      }
       autoResources = true;
       updateButtons();
       const total = Number(response.headers.get('X-Horizon-Files')) || 0;
@@ -715,8 +719,11 @@
         status.textContent = storageUnavailable
           ? 'Runtime ready. Browser storage is unavailable; choose prepared files again to start.'
           : savedPaths
-            ? 'Prepared game files are saved in this browser. Press Play to start.'
-            : 'Runtime ready. Choose a prepared resources folder to start.';
+            ? 'Prepared game files are saved in this browser. Starting Horizon…'
+            : preparedHint || 'Runtime ready. Choose a prepared resources folder to start.';
+        // A returning visitor's copy is already in this browser: start it, as a server with the
+        // folder does, instead of asking for another click.
+        if (savedPaths && !storageUnavailable && !gameStarted) playSaved.click();
       },
       onAbort(reason) { status.textContent = `Horizon stopped: ${reason}`; }
     };

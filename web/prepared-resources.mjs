@@ -9,30 +9,20 @@ import { join, resolve } from 'node:path';
 
 const ROUTE = '/prepared-resources.bin';
 
-// The folder a server running in this repository serves, or null: the operator's
-// HORIZON_WEB_RESOURCES when set, else the most recently prepared of a `26.3` folder beside `.local/`
-// (a copy kept for the browser build) and `horizon-prepare`'s `.local/horizon-client/26.3`. Two
-// copies are common, and the newer horizon-resources.json is the one that was prepared last. A
-// folder is only usable when it holds that file; anything else leaves the page's picker in place,
-// as the deployed site does.
+// The folders a server in this repository looks in, in order: the operator's HORIZON_WEB_RESOURCES
+// when set, else the prepared `26.3` folder beside `.local/`, else `horizon-prepare`'s
+// `.local/horizon-client/26.3`.
+export function preparedCandidates(repository, override) {
+  return override
+    ? [resolve(repository, override)]
+    : [resolve(repository, '26.3'), resolve(repository, '.local/horizon-client/26.3')];
+}
+
+// The folder to serve, or null: only one holding horizon-resources.json is a prepared folder.
+// Anything else leaves the page's picker in place, as the deployed site does.
 export function locatePrepared(repository, override) {
-  if (override) {
-    const named = resolve(repository, override);
-    return existsSync(join(named, 'horizon-resources.json')) ? named : null;
-  }
-  const prepared = [resolve(repository, '26.3'), resolve(repository, '.26.3')]
-    .map(folder => {
-      const stamp = join(folder, 'horizon-resources.json');
-      return { folder, written: existsSync(stamp) ? statSync(stamp).mtimeMs : -1 };
-    })
-    .filter(candidate => candidate.written >= 0);
-  // A strict comparison keeps the first on a tie, so a copied folder that kept its timestamps still
-  // wins over .local's.
-  let newest = null;
-  for (const candidate of prepared) {
-    if (!newest || candidate.written > newest.written) newest = candidate;
-  }
-  return newest?.folder ?? null;
+  return preparedCandidates(repository, override)
+    .find(folder => existsSync(join(folder, 'horizon-resources.json'))) ?? null;
 }
 
 // Every file of the folder, as paths relative to it. A folder that isn't there throws, which the
@@ -46,14 +36,17 @@ function listFiles(directory, prefix, result) {
   return result;
 }
 
-export function preparedResources(directory) {
-  const root = directory ? resolve(directory) : null;
-  // The folder is listed on every request: `horizon-prepare` may have run again since the page
-  // loaded, and walking the tree costs a few dozen milliseconds.
+export function preparedResources(repository, override) {
+  // The folder is looked up and listed on every request: `horizon-prepare` may have run, or the
+  // folder been copied in, since the server started, and walking the tree costs a few dozen
+  // milliseconds.
   return function handle(req, res, pathname) {
     if (pathname !== ROUTE) return false;
+    const root = locatePrepared(repository, override);
     if (!root) {
-      res.writeHead(404).end('No prepared resources');
+      // The page puts this text on its status line: it says where the server looked.
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+        .end(`No prepared game files: looked for ${preparedCandidates(repository, override).join(', ')}.`);
       return true;
     }
     let files, sizes, length;
