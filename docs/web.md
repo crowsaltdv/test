@@ -19,16 +19,16 @@ serving it without those headers will prevent the worker pool from starting.
 
 `web/serve.mjs` also serves the prepared Minecraft 26.3 resources the repository already holds — the
 `26.3` folder beside it, or `horizon-prepare`'s `.local/horizon-client/26.3`; `HORIZON_WEB_RESOURCES`
-names another folder. The page copies them into the virtual `/resources` filesystem from one streamed
-response and starts by itself, so a development run needs no folder picker and no second copy of the
-files. A server without the folder says where it looked on the page's status line. **Fullscreen**
+names another folder. **Play** copies them into the virtual `/resources` filesystem from one streamed
+response and starts, so a run needs no folder picker and no second copy of the files. A server
+without the folder says where it looked on the page's status line. **Fullscreen**
 expands the game to the whole screen and hides the page's top bar; press Escape to leave fullscreen.
 
-A server without that folder (the deployed site) keeps the picker: choose **Start without game
-files** to reach Horizon's missing-files screen, or **Load prepared game files** and select the
-prepared 26.3 resources directory produced by `horizon-prepare`. The browser copies those files
-into `/resources` before starting the client and saves a copy in IndexedDB. On later visits,
-**Play** loads that saved copy; **Clear files** removes it.
+A server without that folder keeps one **Play** button: pressing it copies the server's prepared 26.3
+resources into `/resources` and starts the client, or falls back to the copy saved in IndexedDB from
+an earlier visit. A browser with neither gets the reason on the status line and a **Load a folder
+instead…** button, which copies the prepared 26.3 resources directory produced by `horizon-prepare`
+into `/resources` before starting and saves it in IndexedDB for later visits.
 The generated files are not included in this repository.
 
 The build script uses `cargo +nightly -Z build-std=std,panic_abort`, because the distributed
