@@ -78,12 +78,6 @@ try {
     $ErrorActionPreference = 'Stop'
 } finally { Pop-Location }
 $out = Join-Path $modded 'target\wasm32-unknown-emscripten\fast'
-$dist = Join-Path $PSScriptRoot 'dist'
-New-Item -ItemType Directory -Force $dist | Out-Null
-Copy-Item (Join-Path $out 'horizon-client.js') $dist -Force
-Copy-Item (Join-Path $out 'horizon_client.wasm') $dist -Force
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$page = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'index.html'), $utf8)
-$page = $page -replace '/target/wasm32-unknown-emscripten/fast/horizon-client\.js', '/horizon-client.js'
-[System.IO.File]::WriteAllText((Join-Path $dist 'index.html'), $page, $utf8)
-Get-ChildItem $dist | Select-Object Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } }
+# The page, the app's files (manifest, worker, icons) and the loader and wasm, packed as
+# web/dist.ps1 packs them.
+& (Join-Path $PSScriptRoot 'pack.ps1') -From $out

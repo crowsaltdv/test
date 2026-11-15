@@ -53,6 +53,32 @@ browser. Repack and push for every new build. `web/server.mjs` answers the prepa
 only when `HORIZON_WEB_RESOURCES` names a folder, so a local run of the packed page can load one
 too; the deployed service names none.
 
+## Install as an app
+
+The site is installable: Chrome, Edge and Chromium-based browsers offer **Install** (or **Install
+app** in the address bar), adding Horizon to the desktop or the app list, with its own window and
+icon. The page shows the same offer as an **Install app** button while the browser holds one.
+
+- `web/manifest.webmanifest` names the app, its start page and its icons. The icons are the ones
+  `cargo run -p xtask -- icons` renders into `packaging/icons/`; `web/pack.ps1` (the last step of
+  `web/dist.ps1` and of `web/build-native.ps1`) copies the 256 and 512 pixel ones to `dist/icons/`
+  and the SVG to `dist/favicon.svg`, so the site holds no second copy of the artwork and no
+  Minecraft files.
+- `web/sw.js` is the service worker. It keeps the page, Emscripten's loader and the wasm in the
+  browser's cache, so an installed Horizon starts with no network. `VERSION` names the cache and is
+  stamped at build time with a hash of the wasm (by `web/pack.ps1`) or with its time and size (by
+  `web/serve.mjs`): a rebuilt game installs a new worker and drops the old cache, and nobody bumps a
+  number by hand.
+- The prepared game files and `/mod-proxy` always go to the network, never the cache: they are live
+  data, one of them the player's own folder. Saves and options stay in IndexedDB as above.
+- The installed app is this site's page: it needs the site reachable at least once, and it plays
+  from the prepared files the page last loaded (the deployed page keeps its picker). Deleting the
+  site's browser data removes both the cached app and the saved files.
+
+`web/serve.mjs` serves the same files from `web/` and `packaging/icons/`, so a development run can
+be installed too. The browser's offer appears when it finds the page installable; the button says
+where the browser's own entry is while that has not happened yet.
+
 ## Mods (`.hmod`)
 
 The browser build runs content mods (`.hmod`: data and assets, no code), the same files as on

@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin">
   <meta http-equiv="Cross-Origin-Embedder-Policy" content="require-corp">
+  <meta name="theme-color" content="#16181f">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <title>Horizon in your browser</title>
   <style>
     :root { color-scheme: dark; font: 15px system-ui, sans-serif; background: #101318; color: #e8edf2; }
@@ -48,6 +51,7 @@
       <button id="play-saved" type="button" disabled>Play</button>
     </div>
     <button id="start-empty" disabled>Start without game files</button>
+    <button id="install" type="button">Install app</button>
     <button id="reload" type="button">Reload game</button>
     <button id="fullscreen" type="button" aria-pressed="false">Fullscreen</button>
     <button id="copy-log" type="button" title="Copy the game's recent log lines">Copy game log</button>
@@ -556,6 +560,61 @@
       fullscreenButton.textContent = active ? 'Exit fullscreen' : 'Fullscreen';
       fullscreenButton.setAttribute('aria-pressed', String(active));
     });
+    // Installed app: web/sw.js keeps the page, Emscripten's loader and the wasm on the player's
+    // disk, and the browser then offers Install. The page's own button shows that offer, rather
+    // than leaving it in the browser's menu; a browser that has not made the offer yet is told
+    // where its own entry is.
+    const install = document.querySelector('#install');
+    let installOffer = null;
+    if (matchMedia('(display-mode: standalone)').matches) install.hidden = true;
+    addEventListener('beforeinstallprompt', event => {
+      event.preventDefault();
+      installOffer = event;
+    });
+    install.addEventListener('click', async () => {
+      if (!installOffer) {
+        status.textContent = 'This browser has not offered to install the page yet: use its own Install entry (in Chrome and Edge, the icon at the right of the address bar, or Install in the menu).';
+        return;
+      }
+      const offer = installOffer;
+      installOffer = null;
+      install.hidden = true;
+      offer.prompt();
+      await offer.userChoice.catch(() => {});
+    });
+    addEventListener('appinstalled', () => {
+      install.hidden = true;
+      status.textContent = 'Horizon is installed. It starts from this PC from now on.';
+      void warmApp();
+    });
+    // The loader and the wasm were fetched before the service worker controlled this page (on a
+    // first visit, before the worker existed at all), so its cache holds the page and the icons but
+    // not them. Installing asks for them once, and every start of the installed app fills in
+    // whatever is missing; a browser visit does not, since they are 70 MB and most visitors never
+    // install.
+    async function warmApp() {
+      const loader = document.querySelector('script[src$="horizon-client.js"]')?.src;
+      if (!loader || !('serviceWorker' in navigator)) return;
+      try {
+        const missing = [];
+        for (const url of [loader, new URL('horizon_client.wasm', loader).href]) {
+          if (!(await caches.match(url))) missing.push(url);
+        }
+        if (!missing.length) return;
+        const registration = await navigator.serviceWorker.ready;
+        (navigator.serviceWorker.controller || registration.active)?.postMessage({
+          type: 'warm',
+          urls: missing,
+        });
+      } catch (error) {
+        console.warn('Horizon: could not keep the app for offline use:', error);
+      }
+    }
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(error => {
+        console.warn('Horizon: no service worker, so the app cannot be installed:', error);
+      });
+    }
     playSaved.addEventListener('click', async () => {
       if (!runtimeReady || gameStarted || !savedPaths) return;
       playSaved.disabled = true;
@@ -636,6 +695,9 @@
           storageUnavailable = true;
         }
         updateButtons();
+        // An installed app keeps the loader and the wasm on disk too (see warmApp): a start with no
+        // network then needs nothing from the server.
+        if (matchMedia('(display-mode: standalone)').matches) void warmApp();
         // The development server serves the repository's prepared 26.3 folder (web/serve.mjs), so
         // the run starts without the folder picker.
         try {
