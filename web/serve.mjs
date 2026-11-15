@@ -3,6 +3,7 @@ import { createReadStream, statSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { modProxy } from './mod-proxy.mjs';
+import { preparedResources } from './prepared-resources.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const types = new Map([
@@ -10,6 +11,12 @@ const types = new Map([
   ['.wasm', 'application/wasm'], ['.data', 'application/octet-stream'],
   ['.json', 'application/json; charset=utf-8'], ['.css', 'text/css; charset=utf-8'],
 ]);
+// The prepared game files `horizon-prepare` writes into this repository: the page loads them
+// itself, so running the browser build needs no folder picker. HORIZON_WEB_RESOURCES names another
+// folder (absolute, or relative to the repository).
+const prepared = preparedResources(
+  resolve(root, process.env.HORIZON_WEB_RESOURCES || '.local/horizon-client/26.3'),
+);
 
 createServer((req, res) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
@@ -19,6 +26,7 @@ createServer((req, res) => {
   try { pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); }
   catch { res.writeHead(400).end('Bad request'); return; }
   if (pathname === '/mod-proxy') { modProxy(req, res); return; }
+  if (prepared(req, res, pathname)) return;
   if (pathname === '/') pathname = '/web/index.html';
   const path = resolve(root, `.${pathname}`);
   if (path !== root && !path.startsWith(root + sep)) { res.writeHead(403).end('Forbidden'); return; }

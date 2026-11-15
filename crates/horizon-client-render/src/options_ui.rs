@@ -2247,7 +2247,9 @@ impl OptionsUi {
         for i in found {
             let l = &b.listings[i];
             let mut label = Text::literal(format!("{} {}", l.name, l.version));
-            if !l.supported {
+            if l.built_in {
+                label = label.append(Text::literal(" (built in)"));
+            } else if !l.supported {
                 label = label.append(Text::literal(" (desktop only)"));
             } else if l.has_update() {
                 label = label.append(tr("horizon.mods.browse.has_update"));
@@ -2289,7 +2291,17 @@ impl OptionsUi {
             .filter(|t| !t.is_empty())
             .collect();
         rows.push(Row::Note(by.join(" · ")));
-        if let Some(why) = crate::mod_browser::unsupported_reason(&l.kind).filter(|_| !l.supported)
+        if l.built_in {
+            rows.extend(
+                wrap(
+                    "Built into this web build: turn it on or off in Options > Mods.",
+                    64,
+                )
+                .into_iter()
+                .map(Row::Note),
+            );
+        } else if let Some(why) =
+            crate::mod_browser::unsupported_reason(&l.kind).filter(|_| !l.supported)
         {
             rows.extend(wrap(why, 64).into_iter().map(Row::Note));
         }
@@ -2304,6 +2316,13 @@ impl OptionsUi {
         }
         let installing = b.installing.as_deref() == Some(l.id.as_str());
         let install = match (&l.installed, installing) {
+            _ if l.built_in => inactive(button(
+                0.0,
+                0.0,
+                150.0,
+                Text::literal("Built in"),
+                Act::None,
+            )),
             _ if !l.supported => inactive(button(
                 0.0,
                 0.0,

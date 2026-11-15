@@ -16,6 +16,8 @@
     button:disabled { opacity: .55; cursor: wait; }
     button[hidden] { display: none; }
     #saved-actions { display: flex; gap: 6px; }
+    /* flex would otherwise beat the hidden attribute's display: none. */
+    #saved-actions[hidden] { display: none; }
     #remove-files { color: #ffb8b8; border-color: #864b52; background: #482a31; }
     #fullscreen { white-space: nowrap; }
     #status { color: #aab7c8; min-width: 190px; }
@@ -65,6 +67,7 @@
     let gameStarted = false;
     let launching = false;
     let savedPaths = null;
+    let autoResources = false;
 
     const DB_NAME = 'horizon-prepared-resources';
     const DB_VERSION = 2;
@@ -416,9 +419,9 @@
       status.textContent = 'Horizon is running. Worlds are saved in this browser automatically. Click the game to capture the mouse.';
     }
     function updateButtons() {
-      const hasSavedFiles = Boolean(savedPaths);
-      start.hidden = hasSavedFiles;
-      startEmpty.hidden = hasSavedFiles;
+      const hasSavedFiles = Boolean(savedPaths) && !autoResources;
+      start.hidden = hasSavedFiles || autoResources;
+      startEmpty.hidden = hasSavedFiles || autoResources;
       savedActions.hidden = !hasSavedFiles;
       start.disabled = !runtimeReady || gameStarted || launching;
       startEmpty.disabled = !runtimeReady || gameStarted || launching;
@@ -444,6 +447,83 @@
           status.textContent = `${label} ${i + 1}/${entries.length} files…`;
         }
       }
+    }
+
+    // The local server (web/serve.mjs) serves the prepared 26.3 folder the repository already has
+    // (.local/horizon-client/26.3, or HORIZON_WEB_RESOURCES): the page copies it into /resources by
+    // itself and starts, so developing the browser build needs no folder picker. A server without
+    // the route answers 404, and the picker stays. The folder arrives as one stream of frames (see
+    // web/prepared-resources.mjs), not one request per file: there are 23 000.
+    async function loadPreparedFromServer() {
+      if (!['127.0.0.1', 'localhost', '[::1]', '::1'].includes(location.hostname)) return false;
+      let response;
+      try {
+        response = await fetch('/prepared-resources.bin', { cache: 'no-store' });
+      } catch {
+        return false;
+      }
+      if (!response.ok) return false;
+      autoResources = true;
+      updateButtons();
+      const total = Number(response.headers.get('X-Horizon-Files')) || 0;
+      status.textContent = `Copying ${total} prepared files from the development server…`;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      const FS = Module.FS;
+      const dirs = new Set(['/resources']);
+      FS.mkdirTree('/resources');
+      const chunks = [];
+      let queued = 0;
+      async function need(count) {
+        while (queued < count) {
+          const { value, done } = await reader.read();
+          if (done) throw new Error('The prepared files ended early');
+          if (value.length) { chunks.push(value); queued += value.length; }
+        }
+      }
+      function take(count) {
+        const out = new Uint8Array(count);
+        let filled = 0;
+        while (filled < count) {
+          const chunk = chunks[0];
+          const want = Math.min(chunk.length, count - filled);
+          out.set(chunk.subarray(0, want), filled);
+          filled += want;
+          if (want === chunk.length) chunks.shift();
+          else chunks[0] = chunk.subarray(want);
+        }
+        queued -= count;
+        return out;
+      }
+      const length = bytes => (bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24)) >>> 0;
+      let copied = 0;
+      let manifest = false;
+      for (;;) {
+        // The stream ends at a frame boundary; EOF decided by the reader, not a count.
+        while (queued === 0) {
+          const { value, done } = await reader.read();
+          if (done) { queued = -1; break; }
+          if (value.length) { chunks.push(value); queued += value.length; }
+        }
+        if (queued < 0) break;
+        await need(4);
+        const pathLength = length(take(4));
+        await need(pathLength);
+        const path = decoder.decode(take(pathLength));
+        await need(4);
+        const size = length(take(4));
+        if (!path || path.startsWith('/') || path.split('/').includes('..')) throw new Error(`Bad prepared path: ${path}`);
+        await need(size);
+        const target = `/resources/${path}`;
+        const parent = target.slice(0, target.lastIndexOf('/'));
+        if (!dirs.has(parent)) { FS.mkdirTree(parent); dirs.add(parent); }
+        FS.writeFile(target, take(size));
+        if (path === 'horizon-resources.json') manifest = true;
+        copied++;
+        if (copied % 500 === 0) status.textContent = `Copying prepared files ${copied}${total ? `/${total}` : ''}…`;
+      }
+      if (!manifest) throw new Error('The prepared files have no top-level horizon-resources.json');
+      return true;
     }
 
     start.addEventListener('click', () => picker.click());
@@ -548,17 +628,33 @@
           if (document.visibilityState === 'hidden') void saveWorldsToBrowser();
         });
         window.addEventListener('pagehide', () => { void saveWorldsToBrowser(); });
+        let storageUnavailable = false;
         try {
           savedPaths = await readSavedPaths();
-          updateButtons();
-          status.textContent = savedPaths
-            ? 'Prepared game files are saved in this browser. Press Play to start.'
-            : 'Runtime ready. Choose a prepared resources folder to start.';
         } catch (error) {
           console.error(error);
-          updateButtons();
-          status.textContent = 'Runtime ready. Browser storage is unavailable; choose prepared files again to start.';
+          storageUnavailable = true;
         }
+        updateButtons();
+        // The development server serves the repository's prepared 26.3 folder (web/serve.mjs), so
+        // the run starts without the folder picker.
+        try {
+          if (await loadPreparedFromServer()) {
+            await launch(['--resources', '/resources', '--game-dir', '/game']);
+            return;
+          }
+        } catch (error) {
+          console.error(error);
+          autoResources = false;
+          updateButtons();
+          status.textContent = `Could not load the prepared files from the server: ${error.message || error}`;
+          return;
+        }
+        status.textContent = storageUnavailable
+          ? 'Runtime ready. Browser storage is unavailable; choose prepared files again to start.'
+          : savedPaths
+            ? 'Prepared game files are saved in this browser. Press Play to start.'
+            : 'Runtime ready. Choose a prepared resources folder to start.';
       },
       onAbort(reason) { status.textContent = `Horizon stopped: ${reason}`; }
     };

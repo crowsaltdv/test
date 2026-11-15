@@ -154,6 +154,7 @@ pub fn listings(index: &Index, home: &Path) -> Vec<Listing> {
             Some(Listing {
                 kind: kind_name(p),
                 supported: runnable.is_some(),
+                built_in: false,
                 id: p.id.clone(),
                 name: p.name.clone(),
                 summary: p.summary.clone(),

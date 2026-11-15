@@ -104,6 +104,7 @@ impl Jobs {
             Finished::Index(Ok((index, listings))) => {
                 self.index = Some(index);
                 ui.listings = listings;
+                mark_built_in(&mut ui.listings);
                 ui.status = Status::Ready;
                 self.fetch_icons(ui);
                 false
@@ -118,6 +119,7 @@ impl Jobs {
             Finished::Installed(done, listings) => {
                 ui.installing = None;
                 ui.listings = listings;
+                mark_built_in(&mut ui.listings);
                 match done {
                     Ok(done) => {
                         log::info!(
@@ -207,6 +209,30 @@ impl Jobs {
             }
         }
     }
+}
+
+/// The native mods this build was compiled with (horizon-mixins applied their bundles to its
+/// source; the build script lists their ids in `HORIZON_MIXIN_MODS`): their registry entries are
+/// "built in", switched in Options > Mods, instead of "desktop only".
+fn mark_built_in(listings: &mut [Listing]) {
+    let built: Vec<&str> = option_env!("HORIZON_MIXIN_MODS")
+        .unwrap_or_default()
+        .split(',')
+        .filter(|id| !id.is_empty())
+        .collect();
+    for l in listings.iter_mut().filter(|l| l.kind == "native-mod") {
+        if built.contains(&l.id.as_str()) {
+            l.built_in = true;
+            l.supported = true;
+        }
+    }
+    // Built-in mods sit among the installable ones, most downloaded first.
+    listings.sort_by(|a, b| {
+        b.supported
+            .cmp(&a.supported)
+            .then(b.downloads.cmp(&a.downloads))
+            .then(a.name.cmp(&b.name))
+    });
 }
 
 fn spawn(name: &str, work: impl FnOnce() + Send + 'static) {

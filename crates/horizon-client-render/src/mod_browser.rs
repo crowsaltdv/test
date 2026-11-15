@@ -26,6 +26,9 @@ pub struct Listing {
     /// `mod`, `resourcepack`, or what a browser can't run: `native-mod`, `code-mod`, `shader`,
     /// `modpack` (see `supported`).
     pub kind: String,
+    /// A native mod this build was compiled with: it is in Options > Mods with its switch, and
+    /// there is nothing to install (a browser can't add native code to a game already built).
+    pub built_in: bool,
     /// Whether this game can install it here; the rest are listed with the reason they can't.
     pub supported: bool,
     /// The address of the project's icon (empty for none): the browser fetches it

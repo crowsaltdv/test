@@ -17,12 +17,18 @@ Open <http://127.0.0.1:8000>. The server binds to loopback and sends the cross-o
 headers required for shared-memory WebAssembly threads. Opening the page as a `file:` URL or
 serving it without those headers will prevent the worker pool from starting.
 
-Choose **Start without game files** to reach Horizon's missing-files screen. To continue past it,
-choose **Load prepared game files** and select the prepared Minecraft 26.3 resources directory
-produced by `horizon-prepare`. The browser copies those files into the virtual `/resources`
-filesystem before starting the client and saves a copy in IndexedDB. On later visits, **Play** loads
-that saved copy; **Clear files** removes it. **Fullscreen** expands the game to the whole screen and
-hides the page's top bar; press Escape to leave fullscreen.
+`web/serve.mjs` also serves the prepared Minecraft 26.3 resources the repository already holds in
+`.local/horizon-client/26.3` (from `horizon-prepare`; `HORIZON_WEB_RESOURCES` names another
+folder). The page copies them into the virtual `/resources` filesystem from one streamed response
+and starts by itself, so a development run needs no folder picker and no second copy of the files.
+**Fullscreen** expands the game to the whole screen and hides the page's top bar; press Escape to
+leave fullscreen.
+
+A server without that folder (the deployed site) keeps the picker: choose **Start without game
+files** to reach Horizon's missing-files screen, or **Load prepared game files** and select the
+prepared 26.3 resources directory produced by `horizon-prepare`. The browser copies those files
+into `/resources` before starting the client and saves a copy in IndexedDB. On later visits,
+**Play** loads that saved copy; **Clear files** removes it.
 The generated files are not included in this repository.
 
 The build script uses `cargo +nightly -Z build-std=std,panic_abort`, because the distributed
@@ -43,7 +49,9 @@ Render: a fresh build takes far longer than a free instance allows.
 
 `web/dist` holds the page, the loader and the wasm only. It has no Minecraft files, and must
 not: each visitor loads their own prepared game files in the page, which keeps them in their
-browser. Repack and push for every new build.
+browser. Repack and push for every new build. `web/server.mjs` answers the prepared-files routes
+only when `HORIZON_WEB_RESOURCES` names a folder, so a local run of the packed page can load one
+too; the deployed service names none.
 
 ## Mods (`.hmod`)
 
@@ -77,6 +85,33 @@ desktop. Mods are off until switched on.
   `horizon-mod.toml`, saves it as `horizon-mods/<id>.hmod`, turns it on in `horizon-mods.txt` and
   offers to reload the game, which reads its mods once at start. A file that isn't a Horizon mod
   is refused with the reason. Dropping a `.hmod` on the page does the same.
+
+## Native mods (built in)
+
+A native mod is a patch to the game's own Rust source (docs/native-mods.md). A browser runs one
+prebuilt game, so it can't install one: the ones it has are compiled in ahead of time by
+`./web/build-native.ps1`, which downloads the bundles named in `web/native-mods.txt` from the
+registry (checked against its SHA-256), applies them with
+[horizon-mixins](https://github.com/horizon-rust/horizon-mixins) to a clean copy of the source
+(`git archive HEAD`: commit first) and builds that for the browser into `web/dist`. The current
+list is 23 client-side mods: Zoom, Classic Zoom, FPS Counter, Minimap, Keystrokes, Coordinates
+HUD, Toggle Sprint, Fullbright, 3D Skins, Motion Blur, Connected Textures, ArmorHUD, Armor Status,
+Status Effect HUD, Crosshair Indicator, Chat Heads, Recipes, Fast Items, Fly Speed, Freecam Plus,
+AppleSkin, Accurate Block Placement and RightClickHarvest.
+
+- They are in Options > Mods with an ON/OFF switch and a Settings page, and "(built in)" in
+  Browse Mods. Switching one off takes effect at once. A mod can't be added without a new build.
+- The rest of the registry's native mods stay "(desktop only)". A mod is left out when its bundle
+  names game functions or structures this version doesn't have: the tool refuses it
+  (`E_TARGET_NOT_FOUND`) or the game fails to compile with it. Seven were tried and left out:
+  appleskin_horizon, dynamic_fps_for_rust, freelook, inventory_profiles, veinminer, xtoxray and
+  shulker_peek. Add an id to `native-mods.txt` to try another; the script stops at the first
+  mod that doesn't apply and says which.
+- A bundle pins the game commit it was tested on. The ones here need only the stable hook points,
+  so the script drops the pin (as the launcher's build does); a bundle that needs more fails to
+  build instead.
+- Native mods are native code with the player's rights, not sandboxed (here, the page's). Only
+  registry mods, whose files match the index's SHA-256, go in.
 
 ## Mouse and fullscreen
 

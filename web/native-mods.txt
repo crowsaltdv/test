@@ -1,0 +1,27 @@
+# Native mods compiled into the browser build (web/build-native.ps1), by registry id.
+# Each was tried against this game's source: those left out name game functions or
+# structures this version does not have (appleskin_horizon, dynamic_fps_for_rust, freelook,
+# inventory_profiles, veinminer, xtoxray, shulker_peek).
+accurate_block_placement
+appleskin
+armor_status
+armorhud
+chatheads
+classic_zoom
+connected_textures
+coords_hud
+crosshair_indicator
+fast_items
+fly_speed
+fps_overlay
+freecam_plus
+fullbright_horizon
+keystrokes
+minimap
+motion_blur
+recipes
+rightharvest
+skins_3d
+status_effect_hud
+toggle_sprint
+zoom
